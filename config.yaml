@@ -1,0 +1,24 @@
+geral:
+  moeda: BRL
+  pausa_entre_buscas_seg: [4, 8]   # pausa aleatória entre buscas, para não ser bloqueado
+  max_buscas_por_execucao: 10      # 12 execuções/dia × 10 = ~120 buscas/dia
+  serpapi:                         # preços das agências (Zupper etc.); só funciona com SERPAPI_KEY no .env
+    limite_mensal: 240             # plano grátis = 250/mês; o limite é dividido igualmente pelos dias
+    consultas_reserva_por_execucao: 1  # cada consulta gasta 3 buscas (2 se for só ida)
+    margem_percentual: 15          # consulta voos até 15% acima do preco_max (agência pode baixar)
+
+# Cada rota vira várias buscas: uma para cada combinação de data de ida × duração.
+rotas:
+
+  - nome: Rio → Recife (2 adultos + 1 criança)
+    origem: RIO
+    destino: REC
+    ida_entre: [2026-12-20, 2026-12-23]
+    passo_dias: 1
+    duracoes_dias: [6, 7, 8]
+    adultos: 2
+    criancas: 1
+    bebes_colo: 0
+    classe: economy
+    filtros: {preco_max: 5000, escalas_max: 1, duracao_max_horas: 6.0}
+    alerta: {queda_percentual: 10}
