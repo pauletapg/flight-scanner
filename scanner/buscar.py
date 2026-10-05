@@ -7,19 +7,16 @@ Exemplo:
 """
 
 import argparse
-import random
 import sys
-import time
 from datetime import date, datetime
-
-import os
 
 import yaml
 from dotenv import load_dotenv
 
-from scanner import historico, pesquisa
-from scanner.filtros import combinacoes, passa
-from scanner.main import CAMINHO_BANCO, MAX_ROTAS, PASTA, dinheiro
+from scanner import busca_avulsa, rotas
+from scanner.busca_avulsa import LIMITE_SEM_CONFIRMAR
+from scanner.main import MAX_ROTAS, PASTA, dinheiro
+from scanner.rotas import CAMINHO_CONFIG
 
 EXEMPLO = r"""FLIGHT SCANNER: comandos principais (abra o "Fast scanner.cmd" e digite os comandos)
 
@@ -61,10 +58,6 @@ EXEMPLO = r"""FLIGHT SCANNER: comandos principais (abra o "Fast scanner.cmd" e d
 
 Todas as opções: .\buscar --help
 """ % MAX_ROTAS
-
-CAMINHO_CONFIG = PASTA / "config.yaml"
-LIMITE_SEM_CONFIRMAR = 30  # acima disso, pede --forcar para não ser bloqueado pelo Google
-
 
 def ler_data(texto: str) -> date:
     """Aceita 22/12/2026, 22/12 (ano atual ou o próximo, se já passou) ou 2026-12-22."""
@@ -110,27 +103,6 @@ def montar_rota(args: argparse.Namespace) -> dict:
     return rota
 
 
-def _blocos(texto: str) -> tuple[str, list[str]]:
-    """Separa o config.yaml em (cabeçalho até 'rotas:', um texto por rota), preservando os comentários."""
-    linhas = texto.splitlines(keepends=True)
-    inicio = next(i for i, l in enumerate(linhas) if l.startswith("rotas:")) + 1
-    blocos: list[str] = []
-    for linha in linhas[inicio:]:
-        if linha.startswith("  - "):
-            blocos.append(linha)
-        elif blocos:
-            blocos[-1] += linha
-    return "".join(linhas[:inicio]), blocos
-
-
-def _montar(cabecalho: str, blocos: list[str]) -> str:
-    return cabecalho + "".join("\n" + b.strip("\n") + "\n" for b in blocos)
-
-
-def _ativas(rotas: list[dict]) -> list[dict]:
-    return [r for r in rotas if not r.get("pausada")]
-
-
 def _escolher(perguntas: str, nomes: list[str]) -> int | None:
     for n, nome in enumerate(nomes, 1):
         print(f"  {n}) {nome}")
@@ -140,83 +112,60 @@ def _escolher(perguntas: str, nomes: list[str]) -> int | None:
 
 def salvar_no_config(rota: dict) -> None:
     """Acrescenta a rota no config.yaml, mantendo os comentários. Com 3 buscas ativas, pergunta qual substituir."""
-    original = CAMINHO_CONFIG.read_text(encoding="utf-8")
-    existentes = yaml.safe_load(original)["rotas"] or []
-    if any(r["nome"] == rota["nome"] for r in existentes):
-        raise SystemExit(f"Já existe uma rota chamada {rota['nome']!r} no config.yaml. Escolha outro --nome.")
-    cabecalho, blocos = _blocos(original)
-    if len(_ativas(existentes)) >= MAX_ROTAS:
-        print(f"\nJá há {MAX_ROTAS} buscas monitoradas (o máximo):")
-        if not sys.stdin.isatty():
-            raise SystemExit("Sem terminal para perguntar; pause ou remova uma busca antes (--pausar / --remover).")
-        if input("Quer substituir uma delas pela nova? [s/N] ").strip().lower() not in ("s", "sim"):
-            raise SystemExit("Busca nova não salva.")
-        ativas = [r["nome"] for r in _ativas(existentes)]
-        escolha = _escolher("Substituir qual? (número, Enter cancela) ", ativas)
-        if escolha is None:
-            raise SystemExit("Busca nova não salva.")
-        indice = next(i for i, r in enumerate(existentes) if r["nome"] == ativas[escolha])
-        print(f"Substituindo {ativas[escolha]!r}.")
-        del blocos[indice]
-    bloco = yaml.safe_dump([rota], allow_unicode=True, sort_keys=False, default_flow_style=None)
-    blocos.append("".join("  " + linha for linha in bloco.splitlines(keepends=True)))
-    novo = _montar(cabecalho, blocos)
-    yaml.safe_load(novo)  # garante que o arquivo continua válido antes de gravar
-    CAMINHO_CONFIG.write_text(novo, encoding="utf-8")
+    try:
+        rotas.adicionar(rota)
+        return
+    except rotas.NomeRepetido as erro:
+        raise SystemExit(f"{erro} Escolha outro --nome.")
+    except rotas.VagasEsgotadas as erro:
+        ativas = erro.ativas
+    print(f"\nJá há {MAX_ROTAS} buscas monitoradas (o máximo):")
+    if not sys.stdin.isatty():
+        raise SystemExit("Sem terminal para perguntar; pause ou remova uma busca antes (--pausar / --remover).")
+    if input("Quer substituir uma delas pela nova? [s/N] ").strip().lower() not in ("s", "sim"):
+        raise SystemExit("Busca nova não salva.")
+    escolha = _escolher("Substituir qual? (número, Enter cancela) ", ativas)
+    if escolha is None:
+        raise SystemExit("Busca nova não salva.")
+    print(f"Substituindo {ativas[escolha]!r}.")
+    rotas.adicionar(rota, substituir=ativas[escolha])
 
 
 def gerenciar(acao: str, nome: str | None) -> None:
     """--listar, --pausar, --retomar e --remover, sem precisar editar o config.yaml na mão."""
-    original = CAMINHO_CONFIG.read_text(encoding="utf-8")
-    rotas = yaml.safe_load(original)["rotas"] or []
     if acao == "listar":
-        if not rotas:
+        salvas = rotas.listar()
+        if not salvas:
             print("Nenhuma busca salva.")
-        for r in rotas:
+        for r in salvas:
             estado = "PAUSADA" if r.get("pausada") else "ativa"
             print(f"[{estado}] {r['nome']}: {r['origem']} → {r['destino']}, "
                   f"{r.get('adultos', 1)} adulto(s), {r.get('criancas', 0)} criança(s), teto {r.get('filtros', {}).get('preco_max', '-')}")
-        print(f"\n{len(_ativas(rotas))} de {MAX_ROTAS} vagas ativas usadas.")
+        print(f"\n{len([r for r in salvas if not r.get('pausada')])} de {MAX_ROTAS} vagas ativas usadas.")
         return
-    indices = [i for i, r in enumerate(rotas) if r["nome"] == nome]
-    if not indices:
-        nomes = "\n".join(f"  - {r['nome']}" for r in rotas)
-        raise SystemExit(f"Não achei a busca {nome!r}. As salvas são:\n{nomes}")
-    i = indices[0]
-    cabecalho, blocos = _blocos(original)
-    if acao == "remover":
-        del blocos[i]
-    else:
-        linhas = [l for l in blocos[i].splitlines(keepends=True) if not l.strip().startswith("pausada:")]
-        if acao == "pausar":
-            linhas.insert(1, "    pausada: true\n")
-        blocos[i] = "".join(linhas)
-    novo = _montar(cabecalho, blocos)
-    yaml.safe_load(novo)
-    CAMINHO_CONFIG.write_text(novo, encoding="utf-8")
+    try:
+        ativas = {"remover": rotas.remover, "pausar": rotas.pausar, "retomar": rotas.retomar}[acao](nome)
+    except rotas.RotaNaoEncontrada as erro:
+        nomes = "\n".join(f"  - {n}" for n in erro.nomes)
+        raise SystemExit(f"{erro} As salvas são:\n{nomes}")
     print({"remover": "Removida", "pausar": "Pausada (não gasta buscas)", "retomar": "Retomada"}[acao] + f": {nome}")
-    if acao == "retomar" and len(_ativas(yaml.safe_load(novo)["rotas"])) > MAX_ROTAS:
+    if acao == "retomar" and ativas > MAX_ROTAS:
         print(f"Atenção: agora há mais de {MAX_ROTAS} buscas ativas; pause ou remova outra, senão o scanner não roda.")
 
 
-def consultar_reservas(rota: dict, voos: list, moeda: str) -> None:
-    if not os.getenv("SERPAPI_KEY"):
-        print("\n--reservas precisa da SERPAPI_KEY no arquivo .env.")
-        return
-    con = historico.abrir(CAMINHO_BANCO)
-    print(f"\nConsultando as opções de reserva de {len(voos)} voo(s) na SerpApi...")
-    for v in voos:
-        antes = pesquisa.serpapi_chamadas
-        try:
-            resultado = pesquisa.opcoes_reserva(v, rota["adultos"], rota["criancas"], rota["bebes_colo"], rota["classe"], moeda)
-        except Exception as erro:
-            print(f"  {v.ida:%d/%m}: falhou ({erro})")
-            continue
-        finally:
-            historico.serpapi_somar(con, datetime.now(), pesquisa.serpapi_chamadas - antes)
-        if resultado and resultado[0] < v.preco:
-            v.reserva_preco, v.reserva_onde = resultado
-    print(f"SerpApi: {historico.serpapi_usadas(con, datetime.now())} busca(s) usadas neste mês.")
+def _mostrar_progresso():
+    """Callback de progresso da busca avulsa para o terminal."""
+    extras = []
+
+    def mostrar(i: int | None, n: int | None, texto: str) -> None:
+        if i is not None:
+            print(f"[{i}/{n}] {texto}")
+            return
+        if not extras:  # linha em branco antes do bloco das reservas
+            print()
+        extras.append(texto)
+        print(texto)
+    return mostrar
 
 
 def main() -> None:
@@ -273,7 +222,7 @@ def main() -> None:
     geral = yaml.safe_load(CAMINHO_CONFIG.read_text(encoding="utf-8"))["geral"]
     moeda = geral.get("moeda", "BRL")
     rota = montar_rota(args)
-    pares = combinacoes(rota.get("ida_entre"), rota.get("passo_dias", 1), rota.get("duracoes_dias"), datas=rota.get("datas"))
+    pares = busca_avulsa.combinacoes_da_rota(rota)
     if not pares:
         raise SystemExit("Nenhuma data no futuro para buscar.")
     if len(pares) > LIMITE_SEM_CONFIRMAR and not args.forcar:
@@ -282,34 +231,7 @@ def main() -> None:
 
     print(f"{rota['nome']}: {len(pares)} combinação(ões) de datas, "
           f"{rota['adultos']} adulto(s), {rota['criancas']} criança(s), {rota['bebes_colo']} bebê(s)\n")
-    melhores = []
-    for i, (ida, volta) in enumerate(pares, 1):
-        if i > 1:
-            time.sleep(random.uniform(*geral.get("pausa_entre_buscas_seg", [4, 8])))
-        datas = f"{ida:%d/%m} → {volta:%d/%m}" if volta else f"{ida:%d/%m} (só ida)"
-        try:
-            voos = pesquisa.buscar(
-                rota["origem"], rota["destino"], ida, volta,
-                adultos=rota["adultos"], criancas=rota["criancas"], bebes_colo=rota["bebes_colo"],
-                classe=rota["classe"], moeda=moeda,
-                escalas_max=args.escalas_max, duracao_max_horas=args.duracao_max,
-            )
-        except Exception as erro:
-            print(f"[{i}/{len(pares)}] {datas}: falhou ({erro})")
-            continue
-        # O preço máximo só é aplicado no fim, depois do preço das agências (--reservas).
-        aprovados = [v for v in voos if passa(v, rota["filtros"], ignorar_preco=True)]
-        if aprovados:
-            melhor = min(aprovados, key=lambda v: v.preco)
-            melhores.append(melhor)
-            print(f"[{i}/{len(pares)}] {datas}: {len(aprovados)} voo(s), melhor {dinheiro(melhor.preco, moeda)}")
-        else:
-            print(f"[{i}/{len(pares)}] {datas}: {len(voos)} voo(s), nenhum nos filtros")
-
-    melhores.sort(key=lambda v: v.preco)
-    if melhores and args.reservas:
-        consultar_reservas(rota, melhores[:args.reservas], moeda)
-    melhores = sorted((v for v in melhores if passa(v, rota["filtros"])), key=lambda v: v.menor_preco)
+    melhores = busca_avulsa.buscar(rota, geral, reservas=args.reservas, progresso=_mostrar_progresso())
     if melhores:
         print(f"\nMelhores opções (preço total, ida e volta):\n")
         for v in melhores[:args.top]:
