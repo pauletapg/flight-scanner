@@ -236,6 +236,9 @@ def criar_app(caminho_config: Path | None = None, caminho_banco: Path = CAMINHO_
 
     @app.get("/api/historico")
     def ver_historico(rota: str | None = None):
+        # Rotas removidas do config continuam no banco: o preco_max só existe para as que ainda estão no config.
+        monitoradas = rotas.listar(caminho_config)
+        preco_max = next(((r.get("filtros") or {}).get("preco_max") for r in monitoradas if r["nome"] == rota), None)
         with banco() as con:
             nomes = [n for (n,) in con.execute("SELECT DISTINCT rota FROM precos ORDER BY rota")]
             pontos = []
@@ -247,7 +250,8 @@ def criar_app(caminho_config: Path | None = None, caminho_banco: Path = CAMINHO_
                 )
                 pontos = [{"buscado_em": b, "ida": i, "volta": v, "menor_preco": p, "menor_nos_filtros": f}
                           for b, i, v, p, f in linhas]
-        return {"rotas": nomes, "rota": rota, "pontos": pontos}
+        return {"rotas": nomes, "monitoradas": [r["nome"] for r in monitoradas], "rota": rota,
+                "preco_max": preco_max, "pontos": pontos}
 
     @app.get("/api/alertas")
     def ver_alertas(rota: str | None = None, limite: int = 100):

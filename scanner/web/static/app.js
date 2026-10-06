@@ -5,7 +5,15 @@
 
 /** Cria um elemento: h("p", {class: "x"}, "texto", outroElemento). Texto sempre como texto (sem innerHTML). */
 function h(tag, atributos, ...filhos) {
-  const elemento = document.createElement(tag);
+  return preencher(document.createElement(tag), atributos, filhos);
+}
+
+/** Como h(), para elementos SVG (gráficos). */
+function s(tag, atributos, ...filhos) {
+  return preencher(document.createElementNS("http://www.w3.org/2000/svg", tag), atributos, filhos);
+}
+
+function preencher(elemento, atributos, filhos) {
   for (const [nome, valor] of Object.entries(atributos || {})) {
     if (valor === null || valor === undefined || valor === false) continue;
     if (nome.startsWith("on")) elemento.addEventListener(nome.slice(2), valor);
@@ -119,7 +127,7 @@ async function comBotao(botao, acao) {
 const TELAS = {
   buscar: () => carregarBusca(),
   rotas: () => carregarRotas(),
-  historico: null,
+  historico: () => carregarHistorico(),
   status: () => carregarStatus(),
 };
 const TELA_INICIAL = "buscar";
@@ -715,6 +723,546 @@ async function monitorarBusca(evento) {
   });
 }
 
+// --- histórico e gráficos ---------------------------------------------------------------------------------
+
+let historicoRota = null; // rota escolhida no seletor (continua escolhida ao voltar para a tela)
+let historico = null; // dados da rota escolhida: pontos, combinações, buscas, alertas, preco_max
+let comboDestaque = null; // chave "ida|volta" da combinação em destaque no gráfico
+let campoPreco = null; // "menor_nos_filtros" ou "menor_preco"; null = escolher pela rota
+let larguraGrafico = 0;
+
+const HORA = 3600000;
+
+function chaveCombo(p) {
+  return `${p.ida}|${p.volta || ""}`;
+}
+
+function textoCombo(c) {
+  return c.volta ? `${diaCurto(c.ida)} → ${diaCurto(c.volta)}` : `${diaCurto(c.ida)} (só ida)`;
+}
+
+/** "−3,2%" / "+1,5%" / "0%". */
+function porcento(valor, casas = 1) {
+  const texto = Math.abs(valor).toFixed(casas).replace(".", ",").replace(/,0+$/, "");
+  if (texto === "0") return "0%";
+  return `${valor < 0 ? "−" : "+"}${texto}%`;
+}
+
+/** Combinações de datas (ordenadas pelo menor preço já visto) e buscas (uma por horário de execução).
+ * `campo`: "menor_nos_filtros" ou "menor_preco" (todos os voos); vira `preco` em cada ponto. */
+function organizarHistorico(pontosApi, campo) {
+  const combos = new Map();
+  const buscas = new Map();
+  for (const p of pontosApi.map((ponto) => ({ ...ponto, preco: ponto[campo] }))) {
+    const chave = chaveCombo(p);
+    if (!combos.has(chave)) combos.set(chave, { chave, ida: p.ida, volta: p.volta, pontos: [] });
+    combos.get(chave).pontos.push(p);
+    if (!buscas.has(p.buscado_em)) buscas.set(p.buscado_em, { iso: p.buscado_em, t: new Date(p.buscado_em).getTime(), pontos: [] });
+    buscas.get(p.buscado_em).pontos.push(p);
+  }
+  for (const c of combos.values()) {
+    for (const p of c.pontos) {
+      if (p.preco !== null && (!c.menor || p.preco < c.menor.preco)) c.menor = p;
+    }
+    c.ultimo = c.pontos[c.pontos.length - 1];
+  }
+  const preco = (c) => (c.menor ? c.menor.preco : Infinity);
+  const listaCombos = [...combos.values()].sort((a, b) => preco(a) - preco(b) || a.chave.localeCompare(b.chave));
+  // Uma execução grava tudo com o mesmo horário, mas o banco antigo tem um horário por combinação (segundos de
+  // diferença): horários seguidos com até 2 min entre si contam como a mesma busca.
+  const execucoes = [];
+  for (const b of [...buscas.values()].sort((a, b) => a.t - b.t)) {
+    const anterior = execucoes[execucoes.length - 1];
+    if (anterior && b.t - anterior.tFim <= 2 * 60000) {
+      anterior.pontos.push(...b.pontos);
+      anterior.tFim = b.t;
+    } else {
+      execucoes.push({ ...b, tFim: b.t });
+    }
+  }
+  for (const b of execucoes) {
+    b.maisBarato = b.pontos.filter((p) => p.preco !== null)
+      .reduce((a, p) => (!a || p.preco < a.preco ? p : a), null);
+  }
+  return { combos: listaCombos, buscas: execucoes };
+}
+
+async function carregarHistorico() {
+  const seletor = document.getElementById("rota-historico");
+  let lista;
+  try {
+    lista = await api("GET", "/api/historico");
+  } catch (erro) {
+    mostrarHistoricoVazio(`Não consegui ler o histórico: ${erro.message}`);
+    return;
+  }
+  const comDados = new Set(lista.rotas);
+  const removidas = lista.rotas.filter((nome) => !lista.monitoradas.includes(nome));
+  if (!lista.monitoradas.length && !removidas.length) {
+    seletor.replaceChildren();
+    mostrarHistoricoVazio("Ainda não há buscas no histórico. Elas aparecem aqui depois da primeira execução da tarefa agendada.");
+    return;
+  }
+  const opcao = (nome) => h("option", { value: nome }, comDados.has(nome) ? nome : `${nome} (sem buscas ainda)`);
+  seletor.replaceChildren(...[
+    lista.monitoradas.length && h("optgroup", { label: "Monitoradas" }, lista.monitoradas.map(opcao)),
+    removidas.length && h("optgroup", { label: "Removidas (só no histórico)" }, removidas.map(opcao)),
+  ].filter(Boolean));
+  const todas = [...lista.monitoradas, ...removidas];
+  if (!todas.includes(historicoRota)) {
+    historicoRota = lista.monitoradas.find((nome) => comDados.has(nome)) || removidas[0] || todas[0];
+    comboDestaque = null;
+  }
+  seletor.value = historicoRota;
+  await mostrarRotaHistorico();
+}
+
+function mostrarHistoricoVazio(texto) {
+  const vazio = document.getElementById("historico-vazio");
+  vazio.textContent = texto;
+  vazio.hidden = false;
+  document.getElementById("historico-conteudo").hidden = true;
+}
+
+async function mostrarRotaHistorico() {
+  const nome = historicoRota;
+  const consulta = encodeURIComponent(nome);
+  let dados, alertas, relatorio;
+  try {
+    [dados, alertas, relatorio] = await Promise.all([
+      api("GET", `/api/historico?rota=${consulta}`),
+      api("GET", `/api/alertas?rota=${consulta}`),
+      api("GET", "/api/relatorio"),
+    ]);
+  } catch (erro) {
+    mostrarHistoricoVazio(`Não consegui ler o histórico: ${erro.message}`);
+    return;
+  }
+  if (nome !== historicoRota) return; // a pessoa trocou de rota enquanto carregava
+  if (!dados.pontos.length) {
+    mostrarHistoricoVazio("Esta rota ainda não foi buscada. A tarefa agendada busca as rotas monitoradas 12 vezes por dia.");
+    return;
+  }
+  const temFiltrados = dados.pontos.some((p) => p.menor_nos_filtros !== null);
+  historico = {
+    pontosApi: dados.pontos, alertas, precoMax: dados.preco_max, temFiltrados,
+    menorGeral: Math.min(...dados.pontos.map((p) => p.menor_preco)),
+    horarios: relatorio.rotas.find((r) => r.rota === nome),
+  };
+  // Sem nenhum voo nos filtros, o gráfico "só nos filtros" ficaria vazio: começa em "todos os voos".
+  if (!campoPreco || !temFiltrados) campoPreco = temFiltrados ? "menor_nos_filtros" : "menor_preco";
+
+  document.getElementById("historico-vazio").hidden = true;
+  document.getElementById("historico-conteudo").hidden = false;
+  desenharAlertas(alertas);
+  desenharHorarios(historico.horarios);
+  aplicarCampoPreco();
+}
+
+/** Monta as combinações com o campo de preço escolhido e desenha o gráfico e a tabela. */
+function aplicarCampoPreco() {
+  Object.assign(historico, organizarHistorico(historico.pontosApi, campoPreco));
+  const { buscas, combos, temFiltrados, precoMax, menorGeral } = historico;
+  if (!combos.some((c) => c.chave === comboDestaque)) comboDestaque = combos[0].chave;
+  const nosFiltros = campoPreco === "menor_nos_filtros";
+
+  for (const botao of document.querySelectorAll(".alternar button")) {
+    botao.setAttribute("aria-pressed", String(botao.dataset.campo === campoPreco));
+    botao.disabled = botao.dataset.campo === "menor_nos_filtros" && !temFiltrados;
+  }
+  const aviso = document.getElementById("aviso-filtros");
+  aviso.hidden = temFiltrados;
+  aviso.textContent = precoMax && menorGeral > precoMax
+    ? `Nenhum voo desta rota passou nos filtros até agora: o mais barato encontrado foi ${dinheiro(menorGeral)}, ` +
+      `acima do preço máximo de ${dinheiro(precoMax)}. O gráfico mostra o menor preço de todos os voos.`
+    : "Nenhum voo desta rota passou nos filtros até agora. O gráfico mostra o menor preço de todos os voos.";
+  document.getElementById("titulo-grafico").textContent =
+    nosFiltros ? "Menor preço nos filtros, a cada busca" : "Menor preço de todos os voos, a cada busca";
+  document.getElementById("coluna-menor").textContent = nosFiltros ? "Menor nos filtros" : "Menor (todos os voos)";
+  document.getElementById("resumo-historico").textContent =
+    `${plural(buscas.length, "busca", "buscas")} de ${data(buscas[0].iso)} a ${data(buscas[buscas.length - 1].iso)} · ` +
+    plural(combos.length, "combinação de datas", "combinações de datas");
+  larguraGrafico = 0;
+  desenharGraficoPrecos();
+  desenharTabelaCombinacoes();
+}
+
+/** Os gráficos são desenhados na largura real; ao mudar a largura da janela, desenha de novo. */
+function observarLarguraHistorico() {
+  const conteudo = document.getElementById("historico-conteudo");
+  let largura = 0;
+  new ResizeObserver(() => {
+    if (!historico || !conteudo.clientWidth || conteudo.clientWidth === largura) return;
+    largura = conteudo.clientWidth;
+    desenharGraficoPrecos();
+    desenharHorarios(historico.horarios);
+  }).observe(conteudo);
+}
+
+function destacarCombo(chave) {
+  comboDestaque = chave;
+  larguraGrafico = 0;
+  desenharGraficoPrecos();
+  desenharTabelaCombinacoes();
+}
+
+/** Escala com valores redondos: {inicio, fim, marcas}. */
+function escalaBonita(minimo, maximo, quantas) {
+  if (minimo === maximo) {
+    minimo -= Math.max(1, Math.abs(minimo) * 0.05);
+    maximo += Math.max(1, Math.abs(maximo) * 0.05);
+  }
+  const bruto = (maximo - minimo) / quantas;
+  const ordem = 10 ** Math.floor(Math.log10(bruto));
+  const passo = [1, 2, 2.5, 5, 10].map((f) => f * ordem).find((p) => p >= bruto);
+  const inicio = Math.floor(minimo / passo) * passo;
+  const fim = Math.ceil(maximo / passo) * passo;
+  const marcas = [];
+  for (let v = inicio; v <= fim + passo / 2; v += passo) marcas.push(Math.round(v * 1000) / 1000);
+  return { inicio, fim, marcas };
+}
+
+/** Marcas do eixo de tempo em horas ou dias redondos, no máximo `maximo` delas. */
+function marcasTempo(t0, t1, maximo) {
+  const passos = [1, 2, 3, 6, 12, 24, 48, 96, 168];
+  const horas = passos.find((p) => (t1 - t0) / (p * HORA) <= maximo) || passos[passos.length - 1];
+  const d = new Date(t0);
+  d.setMinutes(0, 0, 0);
+  if (horas >= 24) d.setHours(0);
+  while (d.getTime() < t0 || (horas < 24 && d.getHours() % horas)) d.setHours(d.getHours() + 1);
+  const marcas = [];
+  let diaAnterior = null;
+  for (; d.getTime() <= t1; d.setHours(d.getHours() + horas)) {
+    const dia = `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const hora = `${String(d.getHours()).padStart(2, "0")}h`;
+    const texto = horas >= 24 ? dia : dia !== diaAnterior ? `${dia} ${hora}` : hora;
+    marcas.push({ t: d.getTime(), texto });
+    diaAnterior = dia;
+  }
+  return marcas;
+}
+
+/** A dica flutuante de um gráfico (uma por gráfico). `itens`: [{chave, valor, texto}]. */
+function mostrarDica(alvo, x, y, quando, itens) {
+  let dica = alvo.querySelector(".dica-grafico");
+  if (!dica) {
+    dica = h("div", { class: "dica-grafico", role: "status" });
+    alvo.append(dica);
+  }
+  dica.replaceChildren(
+    h("div", { class: "quando" }, quando),
+    ...itens.map((item) => h("div", { class: "item" },
+      item.chave && h("span", { class: `chave ${item.chave}`, "aria-hidden": "true" }),
+      item.valor && h("span", { class: "valor" }, item.valor),
+      h("span", null, item.texto))),
+  );
+  dica.hidden = false;
+  const largura = dica.offsetWidth;
+  const esquerda = x + 14 + largura > alvo.clientWidth ? x - 14 - largura : x + 14;
+  dica.style.transform = `translate(${Math.max(0, esquerda)}px, ${y}px)`;
+}
+
+function esconderDica(alvo) {
+  const dica = alvo.querySelector(".dica-grafico");
+  if (dica) dica.hidden = true;
+}
+
+/** Gráfico de linha: o menor preço nos filtros de cada combinação de datas ao longo das buscas. A combinação em
+ * destaque fica em azul e as outras em cinza; linha do preço máximo da rota e losangos nos alertas enviados. */
+function desenharGraficoPrecos() {
+  const alvo = document.getElementById("grafico-precos");
+  const largura = alvo.clientWidth;
+  if (!historico || !largura || largura === larguraGrafico) return;
+  larguraGrafico = largura;
+  const { combos, buscas, alertas, precoMax } = historico;
+  const destaque = combos.find((c) => c.chave === comboDestaque);
+  const estreito = largura < 520;
+  const altura = estreito ? 240 : 300;
+  const m = { cima: 16, dir: estreito ? 56 : 72, baixo: 28, esq: estreito ? 60 : 68 };
+  const larguraUtil = largura - m.esq - m.dir;
+  const alturaUtil = altura - m.cima - m.baixo;
+
+  const precos = buscas.flatMap((b) => b.pontos.map((p) => p.preco)).filter((v) => v !== null);
+  const legenda = [];
+  if (!precos.length) {
+    document.getElementById("legenda-grafico").replaceChildren();
+    alvo.replaceChildren(h("p", { class: "vazio" }, "Nenhum voo passou nos filtros desta rota até agora. A tabela abaixo mostra as buscas feitas."));
+    return;
+  }
+  const precosAlerta = alertas.map((a) => a.preco);
+  let minimo = Math.min(...precos, ...precosAlerta);
+  let maximo = Math.max(...precos, ...precosAlerta);
+  // O preço máximo entra no gráfico só se estiver perto dos preços; senão achataria as linhas.
+  const limiteVisivel = precoMax && precoMax <= maximo * 1.3 && precoMax >= minimo * 0.7;
+  if (limiteVisivel) {
+    minimo = Math.min(minimo, precoMax);
+    maximo = Math.max(maximo, precoMax);
+  }
+  const escalaY = escalaBonita(minimo, maximo, estreito ? 4 : 5);
+  const y = (v) => m.cima + alturaUtil * (1 - (v - escalaY.inicio) / (escalaY.fim - escalaY.inicio));
+
+  let t0 = Math.min(buscas[0].t, ...alertas.map((a) => new Date(a.enviado_em).getTime()));
+  let t1 = Math.max(buscas[buscas.length - 1].t, ...alertas.map((a) => new Date(a.enviado_em).getTime()));
+  if (t1 - t0 < HORA) {
+    t0 -= HORA;
+    t1 += HORA;
+  }
+  const x = (t) => m.esq + larguraUtil * ((t - t0) / (t1 - t0));
+
+  const grade = escalaY.marcas.map((v) => s("g", null,
+    s("line", { class: "grade", x1: m.esq, x2: largura - m.dir, y1: y(v), y2: y(v) }),
+    s("text", { class: "eixo-texto", x: m.esq - 8, y: y(v) + 4, "text-anchor": "end" }, dinheiro(v))));
+  const marcasX = marcasTempo(t0, t1, Math.max(2, Math.floor(larguraUtil / 84)));
+  const eixoX = marcasX.map((mx) => s("text", { class: "eixo-texto", x: x(mx.t), y: altura - 8, "text-anchor": "middle" }, mx.texto));
+
+  const caminho = (c) => {
+    let d = "";
+    let aberto = false;
+    for (const p of c.pontos) {
+      if (p.preco === null) {
+        aberto = false; // buscada, mas sem voo nos filtros: a linha quebra
+        continue;
+      }
+      d += `${aberto ? "L" : "M"}${x(new Date(p.buscado_em).getTime()).toFixed(1)},${y(p.preco).toFixed(1)}`;
+      aberto = true;
+    }
+    return d;
+  };
+  const outras = combos.filter((c) => c !== destaque).map((c) => s("path", { class: "linha", d: caminho(c) }));
+  const pontosDestaque = destaque.pontos.filter((p) => p.preco !== null);
+  const ultimo = pontosDestaque[pontosDestaque.length - 1];
+  const losango = (cx, cy) => `M${cx},${cy - 6}L${cx + 6},${cy}L${cx},${cy + 6}L${cx - 6},${cy}Z`;
+
+  const mira = s("line", { class: "mira", y1: m.cima, y2: altura - m.baixo, visibility: "hidden" });
+  const alvoEventos = s("rect", { x: m.esq, y: 0, width: larguraUtil, height: altura - m.baixo, fill: "transparent" });
+  const svg = s("svg", {
+    viewBox: `0 0 ${largura} ${altura}`, height: altura, tabindex: 0, role: "img",
+    "aria-label": `Gráfico do menor preço nos filtros a cada busca. Em destaque: ${textoCombo(destaque)}. ` +
+      "Os valores também estão na tabela abaixo.",
+  },
+    grade,
+    limiteVisivel && s("line", { class: "limite", x1: m.esq, x2: largura - m.dir, y1: y(precoMax), y2: y(precoMax) }),
+    limiteVisivel && s("text", { class: "eixo-texto", x: m.esq + 4, y: y(precoMax) - 6 }, `preço máximo ${dinheiro(precoMax)}`),
+    eixoX,
+    outras,
+    s("path", { class: "linha destaque", d: caminho(destaque) }),
+    pontosDestaque.length <= 60 && pontosDestaque.map((p) => s("circle", {
+      class: "ponto", cx: x(new Date(p.buscado_em).getTime()), cy: y(p.preco), r: 4,
+    })),
+    alertas.map((a) => s("path", { class: "alerta", d: losango(x(new Date(a.enviado_em).getTime()), y(a.preco)) })),
+    ultimo && s("text", { class: "rotulo", x: x(new Date(ultimo.buscado_em).getTime()) + 9, y: y(ultimo.preco) + 4 },
+      dinheiro(ultimo.preco)),
+    mira,
+    alvoEventos,
+  );
+  alvo.replaceChildren(svg);
+
+  // Mira: encaixa na busca mais próxima do ponteiro (ou das setas do teclado) e mostra a dica.
+  let atual = null;
+  const mostrar = (i) => {
+    atual = Math.max(0, Math.min(buscas.length - 1, i));
+    const b = buscas[atual];
+    const bx = x(b.t);
+    mira.setAttribute("x1", bx);
+    mira.setAttribute("x2", bx);
+    mira.setAttribute("visibility", "visible");
+    const doDestaque = b.pontos.find((p) => chaveCombo(p) === comboDestaque);
+    const itens = [];
+    if (doDestaque) {
+      itens.push(doDestaque.preco !== null
+        ? { chave: "destaque", valor: dinheiro(doDestaque.preco), texto: textoCombo(destaque) }
+        : { chave: "destaque", texto: `${textoCombo(destaque)}: nenhum voo nos filtros` });
+    }
+    if (b.maisBarato && !(doDestaque && doDestaque.preco !== null && doDestaque.preco <= b.maisBarato.preco)) {
+      itens.push({ chave: "apagada", valor: dinheiro(b.maisBarato.preco), texto: `mais barato: ${textoCombo(b.maisBarato)}` });
+    }
+    // O alerta é gravado no fim da execução (no banco antigo, segundos depois do último horário da busca).
+    const daBusca = (a) => new Date(a.enviado_em).getTime() >= b.t && new Date(a.enviado_em).getTime() <= b.tFim + 2 * 60000;
+    for (const a of alertas.filter(daBusca)) {
+      itens.push({ chave: "alerta", valor: dinheiro(a.preco), texto: `alerta enviado (${textoCombo(a)})` });
+    }
+    if (!b.maisBarato) itens.push({ texto: "nenhum voo nos filtros nesta busca" });
+    itens.push({ texto: plural(b.pontos.length, "combinação buscada", "combinações buscadas") });
+    mostrarDica(alvo, bx, m.cima, dataHora(b.iso), itens);
+  };
+  const maisProxima = (evento) => {
+    const caixa = svg.getBoundingClientRect();
+    const px = ((evento.clientX - caixa.left) / caixa.width) * largura;
+    let melhor = 0;
+    buscas.forEach((b, i) => {
+      if (Math.abs(x(b.t) - px) < Math.abs(x(buscas[melhor].t) - px)) melhor = i;
+    });
+    return melhor;
+  };
+  const esconder = () => {
+    mira.setAttribute("visibility", "hidden");
+    esconderDica(alvo);
+  };
+  alvoEventos.addEventListener("pointermove", (e) => mostrar(maisProxima(e)));
+  alvoEventos.addEventListener("pointerleave", () => {
+    if (document.activeElement !== svg) esconder();
+  });
+  // Clique: destaca a combinação mais barata daquela busca.
+  alvoEventos.addEventListener("click", (e) => {
+    const b = buscas[maisProxima(e)];
+    if (b.maisBarato && chaveCombo(b.maisBarato) !== comboDestaque) destacarCombo(chaveCombo(b.maisBarato));
+  });
+  svg.addEventListener("focus", () => mostrar(atual ?? buscas.length - 1));
+  svg.addEventListener("blur", esconder);
+  svg.addEventListener("keydown", (e) => {
+    const passo = { ArrowLeft: -1, ArrowRight: 1 }[e.key];
+    if (passo) mostrar((atual ?? buscas.length - 1) + passo);
+    else if (e.key === "Home") mostrar(0);
+    else if (e.key === "End") mostrar(buscas.length - 1);
+    else if (e.key === "Enter" && atual !== null && buscas[atual].maisBarato) {
+      destacarCombo(chaveCombo(buscas[atual].maisBarato));
+      return;
+    } else return;
+    e.preventDefault();
+  });
+
+  legenda.push(h("li", null, h("span", { class: "chave", "aria-hidden": "true" }), `${textoCombo(destaque)} (em destaque)`));
+  if (combos.length > 1) {
+    legenda.push(h("li", null, h("span", { class: "chave apagada", "aria-hidden": "true" }),
+      `outras ${plural(combos.length - 1, "combinação", "combinações")}`));
+  }
+  if (limiteVisivel) legenda.push(h("li", null, h("span", { class: "chave limite", "aria-hidden": "true" }), "preço máximo da rota"));
+  else if (precoMax) {
+    legenda.push(h("li", null, `preço máximo ${dinheiro(precoMax)}, ${precoMax > maximo ? "acima" : "abaixo"} da área do gráfico`));
+  }
+  if (alertas.length) legenda.push(h("li", null, h("span", { class: "chave alerta", "aria-hidden": "true" }), "alerta enviado"));
+  document.getElementById("legenda-grafico").replaceChildren(...legenda);
+}
+
+function desenharTabelaCombinacoes() {
+  const preco = (p) => (p.preco !== null ? dinheiro(p.preco) : h("span", { class: "secundario" }, "nenhum"));
+  const linhas = historico.combos.map((c) => h("tr", {
+    tabindex: 0,
+    "aria-current": c.chave === comboDestaque ? "true" : null,
+    title: "Destacar no gráfico",
+    onclick: () => destacarCombo(c.chave),
+    onkeydown: (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        destacarCombo(c.chave);
+      }
+    },
+  },
+    h("td", null, diaCurto(c.ida)),
+    h("td", null, c.volta ? diaCurto(c.volta) : "só ida"),
+    h("td", { class: "num coluna-dias" }, c.volta ? diasEntre(c.ida, c.volta) : "—"),
+    h("td", { class: "num" }, c.menor ? h("b", null, dinheiro(c.menor.preco)) : h("span", { class: "secundario" }, "nenhum")),
+    h("td", null, c.menor ? dataHora(c.menor.buscado_em) : ""),
+    h("td", { class: "num" }, preco(c.ultimo)),
+    h("td", { class: "num" }, c.pontos.length),
+  ));
+  document.querySelector("#tabela-combinacoes tbody").replaceChildren(...linhas);
+}
+
+function desenharAlertas(alertas) {
+  const lista = document.getElementById("lista-alertas");
+  if (!alertas.length) {
+    lista.replaceChildren(h("li", { class: "secundario" }, "Nenhum alerta enviado para esta rota."));
+    return;
+  }
+  lista.replaceChildren(...alertas.map((a) => h("li", null,
+    h("span", { class: "preco-alerta" }, dinheiro(a.preco)),
+    h("span", null, textoCombo(a)),
+    h("span", { class: "secundario" }, `${dataHora(a.enviado_em)} · ${a.companhias}`),
+  )));
+}
+
+/** Barra com a ponta de dados arredondada (4 px) e o lado do zero reto. */
+function caminhoBarra(x0, largura, yZero, yValor) {
+  const r = Math.min(4, Math.abs(yValor - yZero), largura / 2);
+  const x1 = x0 + largura;
+  if (yValor < yZero) {
+    return `M${x0},${yZero}V${yValor + r}Q${x0},${yValor} ${x0 + r},${yValor}H${x1 - r}Q${x1},${yValor} ${x1},${yValor + r}V${yZero}Z`;
+  }
+  return `M${x0},${yZero}V${yValor - r}Q${x0},${yValor} ${x0 + r},${yValor}H${x1 - r}Q${x1},${yValor} ${x1},${yValor - r}V${yZero}Z`;
+}
+
+/** Colunas divergentes do desvio do preço em relação à média: para cima (laranja) = mais caro, para baixo
+ * (azul) = mais barato. Rótulo só na coluna mais barata; o resto fica na dica e no eixo. */
+function graficoDesvios(alvo, itens, rotulo, detalhe) {
+  const largura = alvo.clientWidth || 480;
+  const altura = 170;
+  const m = { cima: 18, dir: 8, baixo: 24, esq: 44 };
+  const larguraUtil = largura - m.esq - m.dir;
+  const alturaUtil = altura - m.cima - m.baixo;
+  const extremo = Math.max(1, ...itens.map((i) => Math.abs(i.desvio)));
+  const escala = escalaBonita(-extremo, extremo, 4);
+  const y = (v) => m.cima + alturaUtil * (1 - (v - escala.inicio) / (escala.fim - escala.inicio));
+  const faixa = larguraUtil / itens.length;
+  const larguraBarra = Math.min(24, faixa * 0.6);
+  const maisBarato = itens.reduce((a, i) => (i.desvio < a.desvio ? i : a));
+
+  const colunas = itens.map((item, i) => {
+    const cx = m.esq + faixa * (i + 0.5);
+    const alvoBarra = s("rect", {
+      class: "barra-alvo", x: m.esq + faixa * i, y: m.cima, width: faixa, height: alturaUtil, tabindex: 0,
+      "aria-label": `${rotulo(item)}: ${porcento(item.desvio)} em relação à média, ${plural(item.buscas, "busca", "buscas")}`,
+    });
+    const mostrar = () => mostrarDica(alvo, cx, m.cima, rotulo(item), [
+      { valor: porcento(item.desvio), texto: item.desvio < 0 ? "abaixo da média" : "acima da média" },
+      { texto: detalhe(item) },
+    ]);
+    alvoBarra.addEventListener("pointerenter", mostrar);
+    alvoBarra.addEventListener("focus", mostrar);
+    alvoBarra.addEventListener("pointerleave", () => esconderDica(alvo));
+    alvoBarra.addEventListener("blur", () => esconderDica(alvo));
+    return s("g", null,
+      alvoBarra,
+      Math.abs(y(item.desvio) - y(0)) >= 0.5 && s("path", {
+        class: `barra${item.desvio > 0 ? " mais-caro" : ""}`, d: caminhoBarra(cx - larguraBarra / 2, larguraBarra, y(0), y(item.desvio)),
+        "pointer-events": "none",
+      }),
+      s("text", { class: "eixo-texto", x: cx, y: altura - 6, "text-anchor": "middle" }, rotulo(item)),
+      item === maisBarato && item.desvio < 0 && s("text", {
+        class: "rotulo", x: cx, y: Math.min(y(item.desvio) + 14, m.cima + alturaUtil + 2), "text-anchor": "middle",
+      }, porcento(item.desvio)),
+    );
+  });
+  alvo.replaceChildren(s("svg", { viewBox: `0 0 ${largura} ${altura}`, height: altura },
+    escala.marcas.map((v) => s("g", null,
+      s("line", { class: v === 0 ? "zero" : "grade", x1: m.esq, x2: largura - m.dir, y1: y(v), y2: y(v) }),
+      s("text", { class: "eixo-texto", x: m.esq - 6, y: y(v) + 4, "text-anchor": "end" }, porcento(v)))),
+    colunas,
+  ));
+}
+
+function desenharHorarios(dados) {
+  const alvo = document.getElementById("relatorio-horarios");
+  if (!dados || !dados.por_hora.length) {
+    alvo.replaceChildren(h("p", { class: "aviso" },
+      "Poucos dados ainda: cada combinação de datas precisa de pelo menos 2 buscas para comparar os horários."));
+    return;
+  }
+  const melhorHora = dados.por_hora.reduce((a, i) => (i.desvio < a.desvio ? i : a));
+  const menosBuscas = Math.min(...dados.por_hora.map((i) => i.buscas));
+  const horaTexto = (i) => `${String(i.hora).padStart(2, "0")}h`;
+  const graficoHora = h("div", { class: "grafico" });
+  const graficoDia = h("div", { class: "grafico" });
+  alvo.replaceChildren(h("div", { class: "horarios" },
+    h("p", { class: "explica" }, "Quanto o menor preço de cada busca ficou acima ou abaixo da média da sua combinação de datas, ",
+      `pela hora e pelo dia da semana em que a busca rodou (${plural(dados.buscas, "busca", "buscas")}).`),
+    menosBuscas < 10 && h("p", { class: "aviso" }, "Ainda são poucos dados (algumas horas têm menos de 10 buscas): ",
+      "diferenças pequenas podem ser acaso."),
+    melhorHora.desvio < 0 && h("p", { class: "resumo-horario" }, "Mais barato, em média: buscas das ",
+      h("b", null, horaTexto(melhorHora)), ` (${porcento(melhorHora.desvio)} em relação à média).`),
+    h("ul", { class: "legenda-grafico" },
+      h("li", null, h("span", { class: "chave mais-barato", "aria-hidden": "true" }), "abaixo da média"),
+      h("li", null, h("span", { class: "chave mais-caro", "aria-hidden": "true" }), "acima da média")),
+    h("h3", null, "Por hora do dia"), graficoHora,
+    h("h3", null, "Por dia da semana",
+      dados.por_dia.length < 7 && h("span", { class: "secundario" }, ` (só ${plural(dados.por_dia.length, "dia", "dias")} com buscas até agora)`)),
+    graficoDia,
+  ));
+  graficoDesvios(graficoHora, dados.por_hora, horaTexto,
+    (i) => `${plural(i.buscas, "busca", "buscas")} · ${plural(i.minimos, "mínimo histórico", "mínimos históricos")}`);
+  graficoDesvios(graficoDia, dados.por_dia, (i) => i.nome, (i) => plural(i.buscas, "busca", "buscas"));
+}
+
 // --- status e ações ---------------------------------------------------------------------------------------
 
 let acompanhamento = null;
@@ -906,6 +1454,19 @@ document.getElementById("atualizar-status").addEventListener("click", carregarSt
 document.getElementById("rodar-agora").addEventListener("click", () => executar(false));
 document.getElementById("rodar-teste").addEventListener("click", () => executar(true));
 document.getElementById("testar-notificacao").addEventListener("click", testarNotificacao);
+document.getElementById("rota-historico").addEventListener("change", (evento) => {
+  historicoRota = evento.target.value;
+  comboDestaque = null;
+  campoPreco = null;
+  mostrarRotaHistorico();
+});
+for (const botao of document.querySelectorAll(".alternar button")) {
+  botao.addEventListener("click", () => {
+    campoPreco = botao.dataset.campo;
+    aplicarCampoPreco();
+  });
+}
+observarLarguraHistorico();
 window.addEventListener("hashchange", mostrarTela);
 
 mostrarTela();

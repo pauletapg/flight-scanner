@@ -28,6 +28,16 @@ Detalhes de uso no README.md. Textos, comentários e documentação em portuguê
   `lerFormularioRota`/`preencherFormularioRota` leem pelos nomes e ignoram os que o formulário não tem.
   Diálogos respondem por `esperarResposta(dialogo, aoConfirmar)`. Para ver no navegador embutido: configuração
   `interface` do `.claude/launch.json` (porta 8766, com `--reload`).
+- Tela "Histórico" (`#historico`): `GET /api/historico?rota=...` (pontos por busca, alertas, `monitoradas` e `preco_max`
+  da rota se ainda estiver no config) e `GET /api/relatorio` (horários). Os gráficos são SVG desenhados pelo próprio
+  `app.js`, sem biblioteca: `s(...)` cria elementos SVG como `h(...)` cria HTML; `desenharGraficoPrecos` (linha por
+  combinação de datas, uma em destaque, linha do `preco_max`, losangos nos alertas, dica e teclado), `graficoDesvios`
+  (colunas por hora e dia da semana) e `desenharTabelaCombinacoes`. Cores de série nos tokens `--serie`,
+  `--serie-quente` e `--serie-apagada` (claro e escuro; mexer só validando o par com a skill `dataviz`). Vários
+  horários com até 2 min de diferença contam como uma busca. A rota atual nunca teve voo nos filtros, então a tela
+  começa em "Todos os voos" quando não há nenhum ponto nos filtros.
+- Cache do navegador: depois de editar `app.js`/`estilo.css`, recarregar com cache limpo (ou `fetch(url, {cache:"reload"})`
+  e `location.reload()`); com `td`/`th` desencontrados ou comportamento antigo, é cache.
 - Busca avulsa pela API: `POST /api/busca/previa` só conta as combinações (a página mostra antes e confirma acima
   de 30, mandando `forcar`); `GET /api/busca` devolve a busca em andamento ou a última, com a rota completa em
   `config` (a página retoma o progresso e o "Monitorar esta busca" usa essa rota, não o formulário).

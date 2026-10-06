@@ -299,3 +299,113 @@
 - O `fast_flights` carrega o `.env` ao ser importado (pendência da Etapa 3, para a Etapa 8).
 - A porta 8765 continua ocupada pelo outro programa (decisão da Etapa 6).
 - Etapa 5: o histórico pode reaproveitar `fita`/`campo`, `diaCurto` e `textoPassageiros` do `app.js`.
+
+## Etapa 5: Tela "Histórico e gráficos" · 2026-10-05 · em andamento
+**Modelo:** Opus 5.5 (a skill fixa Sonnet, mas a sessão mostrou Opus 5.5) · **Esforço:** medium
+
+**O que foi feito**
+- API: `GET /api/historico` ganhou `monitoradas` (nomes das rotas do config) e `preco_max` (da rota escolhida, se
+  ainda estiver no config). 2 testes em `tests/test_web.py`, escritos antes e vistos falhando (KeyError).
+- `index.html`: tela "Histórico" com seletor de rota (grupos "Monitoradas" e "Removidas (só no histórico)"),
+  alternância "Só voos nos filtros / Todos os voos", gráfico, tabela "menor preço já visto por combinação de datas",
+  alertas enviados e "Horários das buscas".
+- `app.js`: `s()` (SVG; `h()` e `s()` usam `preencher`), `organizarHistorico`, `desenharGraficoPrecos` (linha por
+  combinação, a em destaque em azul e as outras em cinza, linha do preço máximo, losangos nos alertas, rótulo só no
+  último ponto, mira com dica, teclado: setas/Home/End/Enter, clique destaca a mais barata da busca),
+  `desenharTabelaCombinacoes` (clique ou Enter destaca a linha no gráfico), `desenharAlertas`, `graficoDesvios`
+  (colunas divergentes por hora e por dia da semana, dica por coluna, aviso de poucos dados) e redesenho por
+  `ResizeObserver`.
+- `estilo.css`: tokens `--serie`, `--serie-quente`, `--serie-apagada` (claro e escuro) e estilos da tela; `.em-breve` removido.
+
+**Skills usadas**
+- dataviz: forma (linha com destaque + cinza; colunas divergentes), marcas (2 px, pontos r=4 com anel, cantos de 4 px
+  na ponta), dica com valor em destaque, legenda sempre presente. Par azul/laranja validado com `validate_palette.js`
+  nos dois temas; o azul escuro `#5B9BD8` falhou na faixa de luminosidade e virou `#5294D2`.
+- run: não carregada; `preview_start` da `interface` recusou a 8766 (servidor de outra conversa, com `--reload`);
+  abri pela URL, como na Etapa 4.
+- anthropic-skills:built-in-browser: testes no navegador embutido (painel escondido, viewport emulado em 1280x900).
+- superpowers:test-driven-development (fora da lista): os 2 testes da API.
+
+**Desvios do plano**
+- Alternância "Só voos nos filtros / Todos os voos" (vale para gráfico e tabela): a rota monitorada hoje (3
+  passageiros, preço máximo R$ 5.000) nunca teve voo nos filtros (mínimo R$ 6.576), então o gráfico do plano ficaria
+  vazio. Sem dados nos filtros, começa em "todos" com aviso explicando.
+- Horários seguidos com até 2 min de diferença contam como uma busca (o banco antigo grava um horário por
+  combinação); alerta pertence à busca se foi gravado até 2 min depois do fim dela.
+- Linha do preço máximo só entra no gráfico se estiver entre 70% do menor e 130% do maior preço; senão a legenda
+  diz que está acima/abaixo.
+
+**Problemas e correções**
+- Primeiro carregamento: TypeError em `lista.monitoradas.includes` → o JS novo chegou antes do `--reload` do Python
+  → sumiu ao recarregar (o erro continua no histórico do console da aba).
+- Com o painel escondido a largura era 0 e o `ResizeObserver` não disparava → `resize_window` 1280x900 e recarregar.
+- Um script Python de substituição tinha um padrão errado; o `assert` parou antes de gravar. Refeito com o Edit.
+- Na dica, a chave da série em destaque não aparecia (`chave: ""` é falso) → `"destaque"`. Eixo dos horários
+  arredondava 2,5% para "3%" → uma casa decimal. Com empate, a dica mostrava "mais barato" com o mesmo preço → só
+  quando é realmente menor. Alertas antigos não apareciam na dica (gravados depois do último horário) → janela de 2 min.
+
+**Observações**
+- `navigate` para a mesma URL com `#hash` não recarrega a página; usar `location.reload()`.
+- Com o documento sem foco (painel escondido), `focus`/`blur` não disparam sozinhos; o tratador do blur foi conferido
+  disparando o evento.
+
+**Verificação**
+- `.\.venv\Scripts\python.exe -m pytest`: 103 passaram, 0 falharam. `node --check app.js`: ok.
+- Rota "Rio → Recife (2 adultos + 1 criança)": os 9 pontos da combinação em destaque, lidos de volta da posição no
+  SVG pela escala do eixo, batem com `SELECT buscado_em, MIN(preco) ... GROUP BY buscado_em` (10.272, 10.199 ×5,
+  6.576 ×3). ok.
+- "Rio → Recife (Natal 2026)": tabela confere com SQL (R$ 1.721 em 04/10 01:18; última busca sem voo nos filtros);
+  5 alertas na lista e 5 losangos; dica mostra data, hora, preço e os alertas daquela busca. ok.
+- Console: só o erro do primeiro carregamento (antes do reload do servidor). ok.
+- NÃO conferido ainda: 375 px e tema escuro.
+
+**Pendências**
+- Conferir a tela a 375 px e no tema escuro; depois atualizar o `CLAUDE.md` (tela de histórico, `s()`, tokens
+  `--serie*`) e commitar como `Etapa 5: ...`.
+- O `fast_flights` carrega o `.env` ao ser importado (para a Etapa 8). A porta 8765 continua ocupada (Etapa 6).
+
+## Etapa 5: Tela "Histórico e gráficos" (retomada) · 2026-10-06 · concluída
+**Modelo:** Sonnet 5.5 · **Esforço:** medium
+
+**O que foi feito**
+- Fechamento da Etapa 5 a partir das alterações não commitadas da entrada anterior (o trabalho de código já estava
+  feito; faltava conferir 375 px e o tema escuro, atualizar o `CLAUDE.md` e commitar).
+- Tabela "menor preço já visto por combinação de datas" a 375 px: o preço (coluna mais importante) ficava fora da
+  tela, atrás de "Dias" e de um cabeçalho de 166 px. Em `@media (max-width: 520px)`: coluna "Dias" escondida
+  (`.coluna-dias` no `th` em `index.html` e no `td` em `app.js`), espaçamento lateral menor e cabeçalhos podem
+  quebrar linha. As colunas "Visto em", "Última busca" e "Buscas" continuam por rolagem lateral dentro do cartão.
+- `CLAUDE.md`: tela de histórico (API, `s()`, funções de desenho, tokens `--serie*`, regra dos 2 min) e a dica de cache
+  do navegador.
+
+**Skills usadas**
+- dataviz: aplicada na entrada anterior; aqui só conferi o resultado nos dois temas.
+- run: não carregada; `preview_start` da `interface` funcionou nesta sessão (a 8766 estava livre).
+- anthropic-skills:built-in-browser: viewport 375x812 em claro e escuro, console e rede.
+
+**Desvios do plano**
+- Coluna "Dias" fica escondida a 520 px ou menos (dá para deduzir de ida e volta); no plano a tabela não previa
+  tratamento para telas estreitas.
+
+**Problemas e correções**
+- Depois do ajuste, os valores de "Dias" apareceram sob o cabeçalho "Menor": o `estilo.css` novo já estava em uso, mas o
+  `app.js` antigo vinha do cache do navegador (o `th` sumia e o `td` não). Corrigido recarregando com
+  `fetch(url, {cache:"reload"})` + `location.reload()`; não era bug do código.
+- Meu `fetch('/static/estilo.css')` de teste usou o caminho errado (os arquivos são servidos na raiz: `/estilo.css`) e
+  deixou um 404 no console. Não vem da página.
+- Captura de tela estourou o tempo duas vezes após trocar o esquema de cores; funcionou na repetição.
+
+**Observações**
+- Cache do navegador com a página estática pode mostrar HTML/CSS/JS de versões diferentes depois de uma edição; ao ver
+  colunas ou comportamento desencontrados, recarregar com cache limpo antes de procurar bug.
+- A 375 px nenhuma aba tem rolagem horizontal da página (`scrollWidth` 375 em Buscar, Monitoradas, Histórico e Status).
+
+**Verificação**
+- `.\.venv\Scripts\python.exe -m pytest`: 103 passaram, 0 falharam. `node --check app.js`: ok.
+- "Pronto quando" da Etapa 5: gráfico de Rio → Recife com datas e preços conferindo com SQL direto e dica com data, hora e
+  preço (conferidos na entrada anterior), sem erros no console (só o 404 do meu `fetch` de teste): ok.
+- 375 px: sem rolagem horizontal da página; preço visível na tabela; gráfico, legenda e relatório de horários legíveis: ok.
+- Tema escuro: gráfico de preços, linha do preço máximo, aviso, colunas de horários e tabela com contraste legível: ok.
+
+**Pendências**
+- O `fast_flights` carrega o `.env` ao ser importado (para a Etapa 8). A porta 8765 continua ocupada por outro projeto
+  (`ferramentas\servidor.py`); a Etapa 6 precisa tratar isso ao subir o servidor no atalho.

@@ -28,6 +28,11 @@
   --console: #102029;
   --console-texto: #D6E3EA;
   --sombra: 0 1px 0 rgba(21, 34, 44, .08), 0 2px 6px rgba(21, 34, 44, .06);
+  /* Gráficos (validados com o validate_palette.js da skill dataviz contra --papel): azul = a série em destaque
+     e "mais barato que a média"; laranja = "mais caro que a média"; cinza = as outras combinações. */
+  --serie: #1F5C99;
+  --serie-quente: #C4581F;
+  --serie-apagada: #BAC5CD;
 
   --fonte-sinal: "Bahnschrift", "DIN Alternate", "Arial Narrow", sans-serif;
   --fonte-texto: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
@@ -56,6 +61,9 @@
     --console: #091116;
     --console-texto: #C9D8E0;
     --sombra: 0 1px 0 rgba(0, 0, 0, .4);
+    --serie: #5294D2;
+    --serie-quente: #D9773A;
+    --serie-apagada: #3B4B57;
   }
 }
 
@@ -139,13 +147,6 @@ main { max-width: var(--largura); margin: 0 auto; padding: var(--e5) var(--e4) v
 .tela[hidden] { display: none; }
 .cabecalho-tela { display: flex; justify-content: space-between; align-items: center; gap: var(--e4); flex-wrap: wrap; }
 .explica { margin: 0; color: var(--tinta-2); max-width: 70ch; }
-.em-breve {
-  margin: 0;
-  padding: var(--e5);
-  background: var(--papel);
-  border: 1px dashed var(--regua);
-  color: var(--tinta-2);
-}
 
 /* --- vagas (os 3 lugares no suporte) --- */
 
@@ -376,6 +377,91 @@ input.curto { max-width: 9em; }
 .erros details pre { margin-top: var(--e2); }
 .erros .sem-detalhe { overflow-wrap: anywhere; }
 
+/* --- histórico e gráficos --- */
+
+.filtros-historico { display: flex; align-items: center; gap: var(--e3); flex-wrap: wrap; }
+.filtros-historico label { font-family: var(--fonte-sinal); font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--tinta-2); }
+.filtros-historico select { width: auto; max-width: 100%; background: var(--papel); }
+#historico-conteudo { display: flex; flex-direction: column; gap: var(--e4); }
+#historico-conteudo[hidden], .vazio[hidden] { display: none; }
+
+/* Legenda: a marca imita o que está no gráfico (traço para linha, losango para alerta); o texto fica na tinta. */
+.legenda-grafico { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--e1) var(--e4); font-size: 13px; color: var(--tinta-2); }
+.legenda-grafico li { display: flex; align-items: center; gap: var(--e2); }
+.chave { display: inline-block; width: 18px; height: 0; border-top: 2px solid var(--serie); border-radius: 1px; }
+.chave.apagada { border-top-color: var(--serie-apagada); }
+.chave.limite { border-top: 1px solid var(--tinta-2); }
+.chave.alerta { width: 9px; height: 9px; border: 2px solid var(--tinta); background: var(--papel); transform: rotate(45deg); margin: 0 4px; }
+.chave.mais-barato { width: 10px; height: 10px; border: 0; background: var(--serie); border-radius: 1px; }
+.chave.mais-caro { width: 10px; height: 10px; border: 0; background: var(--serie-quente); border-radius: 1px; }
+
+.aviso[hidden] { display: none; }
+.alternar { display: inline-flex; align-self: flex-start; border: 1px solid var(--regua); border-radius: var(--canto); }
+.alternar button { font: 600 13px/1 var(--fonte-texto); padding: var(--e2) var(--e3); min-height: 32px; border: 0; background: transparent; color: var(--tinta-2); cursor: pointer; }
+.alternar button + button { border-left: 1px solid var(--regua); }
+.alternar button[aria-pressed="true"] { background: var(--azul-claro); color: var(--tinta); }
+.alternar button:disabled { opacity: .5; cursor: not-allowed; }
+
+.grafico { position: relative; min-height: 120px; }
+.grafico svg { display: block; width: 100%; overflow: visible; }
+.grafico svg:focus-visible { outline: 2px solid var(--azul); outline-offset: 4px; }
+.grafico .grade { stroke: var(--regua); stroke-width: 1; shape-rendering: crispEdges; }
+.grafico .eixo-texto { fill: var(--tinta-2); font: 12px var(--fonte-texto); font-variant-numeric: tabular-nums; }
+.grafico .rotulo { fill: var(--tinta); font: 600 12px var(--fonte-texto); }
+.grafico .linha { fill: none; stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; stroke: var(--serie-apagada); }
+.grafico .linha.destaque { stroke: var(--serie); stroke-width: 2; }
+.grafico .ponto { fill: var(--serie); stroke: var(--papel); stroke-width: 2; }
+.grafico .limite { stroke: var(--tinta-2); stroke-width: 1; shape-rendering: crispEdges; }
+.grafico .alerta { fill: var(--papel); stroke: var(--tinta); stroke-width: 2; }
+.grafico .mira { stroke: var(--tinta-2); stroke-width: 1; shape-rendering: crispEdges; pointer-events: none; }
+.grafico .barra { fill: var(--serie); }
+.grafico .barra.mais-caro { fill: var(--serie-quente); }
+.grafico .barra-alvo { fill: transparent; cursor: default; }
+.grafico .barra-alvo:hover + .barra, .grafico .barra-alvo:focus + .barra { opacity: .75; }
+.grafico .zero { stroke: var(--tinta-2); stroke-width: 1; shape-rendering: crispEdges; }
+
+.dica-grafico {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: var(--papel);
+  border: 1px solid var(--regua);
+  border-radius: var(--canto);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .15);
+  padding: var(--e2) var(--e3);
+  font-size: 13px;
+  min-width: 180px;
+  max-width: 280px;
+}
+.dica-grafico[hidden] { display: none; }
+.dica-grafico .quando { color: var(--tinta-2); font-size: 12px; margin-bottom: var(--e1); }
+.dica-grafico .item { display: flex; align-items: baseline; gap: var(--e2); }
+.dica-grafico .item + .item { margin-top: 2px; }
+.dica-grafico .valor { font-weight: 600; font-variant-numeric: tabular-nums; }
+.dica-grafico .chave { flex: none; align-self: center; }
+
+.tabela-rolagem { overflow-x: auto; }
+.tabela { border-collapse: collapse; width: 100%; font-size: 14px; }
+.tabela th { font-family: var(--fonte-sinal); font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--tinta-2); text-align: left; padding: var(--e1) var(--e3) var(--e2); border-bottom: 1px solid var(--regua); white-space: nowrap; }
+.tabela td { padding: var(--e2) var(--e3); border-bottom: 1px solid var(--regua); white-space: nowrap; }
+.tabela .num { text-align: right; font-variant-numeric: tabular-nums; }
+.tabela tbody tr { cursor: pointer; }
+.tabela tbody tr:hover { background: var(--fundo); }
+.tabela tbody tr[aria-current="true"] { background: var(--azul-claro); box-shadow: inset 3px 0 0 var(--serie); }
+.tabela tbody tr:last-child td { border-bottom: 0; }
+
+.painel-historico { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: var(--e3); align-items: start; }
+.alertas { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.alertas li { padding: var(--e2) 0; border-top: 1px solid var(--regua); display: grid; grid-template-columns: auto 1fr; gap: 0 var(--e3); }
+.alertas li:first-child { border-top: 0; padding-top: 0; }
+.alertas .preco-alerta { font-family: var(--fonte-sinal); font-weight: 700; font-size: 20px; line-height: 1.1; }
+.alertas .secundario { grid-column: 1 / -1; }
+.horarios { display: flex; flex-direction: column; gap: var(--e4); }
+.horarios h3 { margin: 0; font-size: 13px; font-weight: 600; }
+.resumo-horario { margin: 0; font-size: 14px; }
+
 /* --- diálogos e formulários --- */
 
 .dialogo {
@@ -446,7 +532,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--azul); outline: 
   .fita-campos > div:nth-last-child(-n+2) { border-bottom: 0; }
   .fita-acoes { border-left: 0; border-top: 1px solid var(--regua); flex-direction: row; flex-wrap: wrap; }
   .fita-acoes .botao { flex: 1; }
-  .painel-status { grid-template-columns: minmax(0, 1fr); }
+  .painel-status, .painel-historico { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 520px) {
@@ -459,4 +545,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--azul); outline: 
   .erros li { grid-template-columns: auto 1fr; }
   .erros li > :last-child { grid-column: 1 / -1; }
   .dialogo { padding: var(--e4); }
+  .tabela .coluna-dias { display: none; }
+  .tabela th, .tabela td { padding-left: var(--e2); padding-right: var(--e2); }
+  .tabela th { white-space: normal; vertical-align: bottom; }
 }

@@ -99,11 +99,58 @@
       <div id="lista-rotas" class="fitas"><p class="secundario">Carregando…</p></div>
     </section>
 
-    <!-- Histórico e gráficos: Etapa 5 -->
+    <!-- Histórico e gráficos -->
     <section class="tela" id="tela-historico" hidden>
       <h1>Histórico e gráficos</h1>
-      <p class="em-breve">Em breve: preço ao longo do tempo, alertas enviados e relatório de horários. Por enquanto,
-        use <code>python -m scanner.relatorio</code> no terminal.</p>
+      <div class="filtros-historico">
+        <label for="rota-historico">Rota</label>
+        <select id="rota-historico"></select>
+      </div>
+      <p class="vazio" id="historico-vazio" hidden></p>
+
+      <div id="historico-conteudo" hidden>
+        <article class="quadro" aria-labelledby="titulo-grafico">
+          <div class="cabecalho-quadro">
+            <h2 id="titulo-grafico">Menor preço a cada busca</h2>
+            <span class="secundario" id="resumo-historico"></span>
+          </div>
+          <div class="alternar" role="group" aria-label="Preços mostrados no gráfico e na tabela">
+            <button type="button" data-campo="menor_nos_filtros">Só voos nos filtros</button>
+            <button type="button" data-campo="menor_preco">Todos os voos</button>
+          </div>
+          <p class="aviso" id="aviso-filtros" hidden></p>
+          <ul class="legenda-grafico" id="legenda-grafico"></ul>
+          <div class="grafico" id="grafico-precos"></div>
+          <p class="dica">Passe o mouse (ou use as setas com o gráfico selecionado) para ver cada busca. Clique no
+            gráfico ou numa linha da tabela para destacar outra combinação de datas.</p>
+        </article>
+
+        <article class="quadro" aria-labelledby="titulo-combinacoes">
+          <h2 id="titulo-combinacoes">Menor preço já visto por combinação de datas</h2>
+          <div class="tabela-rolagem">
+            <table class="tabela" id="tabela-combinacoes">
+              <thead><tr>
+                <th scope="col">Ida</th><th scope="col">Volta</th><th scope="col" class="num coluna-dias">Dias</th>
+                <th scope="col" class="num" id="coluna-menor">Menor preço</th><th scope="col">Visto em</th>
+                <th scope="col" class="num">Última busca</th><th scope="col" class="num">Buscas</th>
+              </tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </article>
+
+        <div class="painel-historico">
+          <article class="quadro" aria-labelledby="titulo-alertas">
+            <h2 id="titulo-alertas">Alertas enviados</h2>
+            <ol class="alertas" id="lista-alertas"></ol>
+          </article>
+
+          <article class="quadro" aria-labelledby="titulo-horarios">
+            <h2 id="titulo-horarios">Horários das buscas</h2>
+            <div id="relatorio-horarios"></div>
+          </article>
+        </div>
+      </div>
     </section>
 
     <!-- Status e ações -->

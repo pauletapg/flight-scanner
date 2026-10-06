@@ -304,7 +304,16 @@ def test_historico_por_rota(cliente, com_historico):
 
 
 def test_historico_sem_rota_so_lista_as_rotas(cliente, com_historico):
-    assert cliente.get("/api/historico").json() == {"rotas": ["A", "Outra"], "rota": None, "pontos": []}
+    assert cliente.get("/api/historico").json() == {"rotas": ["A", "Outra"], "monitoradas": ["A", "B"],
+                                                    "rota": None, "preco_max": None, "pontos": []}
+
+
+def test_historico_traz_o_preco_max_da_rota_monitorada(cliente, caminhos, com_historico):
+    cliente.post("/api/rotas", json={"rota": nova_rota("Nova")})
+    assert cliente.get("/api/historico", params={"rota": "Nova"}).json()["preco_max"] == 3000
+    # "A" está no config sem preco_max; "Outra" só existe no banco (rota removida).
+    assert cliente.get("/api/historico", params={"rota": "A"}).json()["preco_max"] is None
+    assert cliente.get("/api/historico", params={"rota": "Outra"}).json()["preco_max"] is None
 
 
 def test_alertas(cliente, com_historico):
