@@ -86,3 +86,22 @@ def test_mensagem_do_alerta():
     assert "Caiu 10% (mínimo anterior R$ 4.000)" in texto
     assert "10/11 (só ida)" in texto
     assert texto.index("R$ 3.600") < texto.index("R$ 4.100")  # mais barato primeiro
+
+
+def test_resumo_diario_e_melhor_recente():
+    from datetime import datetime
+    from scanner.pesquisa import Voo
+
+    con = historico.abrir(":memory:")
+    agora = datetime(2026, 10, 6, 9, 5)
+    caro = Voo("RIO", "REC", date(2026, 12, 20), date(2026, 12, 27), 6576, "Azul", 0, 165, "", "", "x")
+    longo = Voo("RIO", "REC", date(2026, 12, 21), date(2026, 12, 28), 3000, "X", 2, 165, "", "", "")
+    historico.salvar(con, "Rota", [(caro, False), (longo, False)], "BRL", datetime(2026, 10, 6, 1, 0))
+    melhor = historico.melhor_recente(con, "Rota", {"escalas_max": 1}, agora)
+    assert melhor[0] == 6576  # ignora o de 2 escalas
+    assert historico.melhor_recente(con, "Rota", {}, datetime(2026, 10, 8)) is None  # fora das 24 h
+
+    assert historico.resumo_pendente(con, agora)
+    historico.marcar_resumo(con, agora)
+    assert not historico.resumo_pendente(con, agora)
+    assert historico.resumo_pendente(con, datetime(2026, 10, 7, 9))

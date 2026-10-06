@@ -147,3 +147,37 @@ def serpapi_somar(con: sqlite3.Connection, quando: datetime, n: int) -> None:
             (chave, str(serpapi_usadas(con, quando, no_dia) + n)),
         )
     con.commit()
+
+
+def resumo_pendente(con: sqlite3.Connection, agora: datetime) -> bool:
+    """Falta o aviso do dia: nenhum alerta nem resumo foi enviado hoje."""
+    inicio = agora.strftime("%Y-%m-%dT00:00:00")
+    if con.execute("SELECT 1 FROM alertas WHERE enviado_em >= ?", (inicio,)).fetchone():
+        return False
+    return con.execute("SELECT 1 FROM estado WHERE chave = ?", (f"resumo:{agora:%Y-%m-%d}",)).fetchone() is None
+
+
+def marcar_resumo(con: sqlite3.Connection, agora: datetime) -> None:
+    con.execute("INSERT OR REPLACE INTO estado (chave, valor) VALUES (?, '1')", (f"resumo:{agora:%Y-%m-%d}",))
+    con.commit()
+
+
+def melhor_recente(
+    con: sqlite3.Connection, rota: str, filtros: dict, agora: datetime, horas: int = 24
+) -> tuple | None:
+    """(preco, ida, volta, companhias, escalas, duracao_min) do voo mais barato visto nas últimas
+    `horas` que respeita as escalas e a duração dos filtros, sem olhar o preço (ele pode estar acima do teto)."""
+    desde = (agora - timedelta(hours=horas)).isoformat(timespec="seconds")
+    linhas = con.execute(
+        "SELECT preco, ida, volta, companhias, escalas, duracao_min FROM precos "
+        "WHERE rota = ? AND buscado_em >= ? ORDER BY preco",
+        (rota, desde),
+    )
+    escalas_max, duracao_max = filtros.get("escalas_max"), filtros.get("duracao_max_horas")
+    for linha in linhas:
+        if escalas_max is not None and linha[4] > escalas_max:
+            continue
+        if duracao_max is not None and linha[5] > duracao_max * 60:
+            continue
+        return linha
+    return None

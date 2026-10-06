@@ -133,6 +133,41 @@ def consultar_reservas(con, geral: dict, resultados: list, moeda: str) -> None:
             voo.reserva_preco, voo.reserva_onde = preco, onde
 
 
+def resumo_diario(con, rotas: list, geral: dict, moeda: str, dry_run: bool) -> None:
+    """Garante pelo menos um aviso por dia, mesmo sem voo dentro do preço: depois da hora configurada,
+    se nenhum alerta saiu hoje, manda o voo mais barato das últimas 24 h de cada rota."""
+    agora = datetime.now()
+    if agora.hour < geral.get("resumo_diario_hora", 9) or not historico.resumo_pendente(con, agora):
+        return
+    linhas = ["✈️ Flight Scanner: resumo do dia", "Nenhum voo dentro do preço máximo hoje. Os mais baratos das últimas 24 h:"]
+    for rota in rotas:
+        filtros = rota.get("filtros", {})
+        melhor = historico.melhor_recente(con, rota["nome"], filtros, agora)
+        linhas += ["", f"*{rota['nome']}*"]
+        if not melhor:
+            linhas.append("Sem voos encontrados nas últimas 24 h.")
+            continue
+        preco, ida, volta, companhias, escalas, duracao = melhor
+        datas = f"{ida[8:]}/{ida[5:7]} → {volta[8:]}/{volta[5:7]}" if volta else f"{ida[8:]}/{ida[5:7]} (só ida)"
+        teto = filtros.get("preco_max")
+        acima = f" (teto {dinheiro(teto, moeda)})" if teto else ""
+        linhas.append(f"{datas} · {dinheiro(preco, moeda)}{acima} · {'direto' if escalas == 0 else f'{escalas} escala(s)'} · {companhias}")
+    mensagem = "\n".join(linhas)
+    if dry_run:
+        print("\n" + mensagem + "\n")
+        return
+    try:
+        notificar.enviar(mensagem)
+    except notificar.SemCredenciais as erro:
+        log.warning("Notificação não configurada (%s). Resumo não enviado:\n%s", erro, mensagem)
+        return
+    except Exception:
+        log.exception("Falha ao enviar o resumo diário; será tentado na próxima execução")
+        return
+    historico.marcar_resumo(con, agora)
+    log.info("Resumo diário enviado")
+
+
 def executar(config: dict, nome_rota: str | None = None, dry_run: bool = False) -> None:
     geral = config["geral"]
     moeda = geral.get("moeda", "BRL")
@@ -200,6 +235,7 @@ def executar(config: dict, nome_rota: str | None = None, dry_run: bool = False) 
         historico.salvar(con, rota["nome"], avaliados, moeda, datetime.now())
 
     if not alertas:
+        resumo_diario(con, rotas, geral, moeda, dry_run)
         log.info("Fim: nenhum alerta")
         return
 
