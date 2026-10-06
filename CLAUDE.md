@@ -10,6 +10,12 @@ Detalhes de uso no README.md. Textos, comentários e documentação em portuguê
 - Busca avulsa / rotas salvas: `.\.venv\Scripts\python.exe -m scanner.buscar --listar`
 - Interface (servidor): `.\.venv\Scripts\python.exe -m uvicorn scanner.web.app:app --port 8765`
   (neste PC a 8765 pode estar ocupada por outro projeto, o `ferramentas\servidor.py`; use outra porta para testar)
+- Atalho do usuário: `Flight Scanner.cmd` (duplo clique). Se `GET /api/rotas` já responde com `max_ativas` na 8765, só
+  abre o navegador; se a porta é de outro programa, avisa e sai com 1; senão sobe `pythonw -m uvicorn ...
+  --no-access-log` com a saída em `logs\interface.log` e abre a página quando o servidor responde. Encerra-se pelo
+  botão "Desligar interface" (`POST /api/desligar` com `{"confirmar": true}`: SIGINT depois de 0,5 s, `os._exit`
+  se não sair em 5 s). Para testar o `.cmd` por ferramenta, o servidor herda a pipe da chamada e ela só termina
+  quando o servidor fecha: rode em segundo plano ou desligue o servidor logo depois. Arquivo em UTF-8 com CRLF.
 
 ## Convenções
 

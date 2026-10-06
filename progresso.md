@@ -409,3 +409,61 @@
 **Pendências**
 - O `fast_flights` carrega o `.env` ao ser importado (para a Etapa 8). A porta 8765 continua ocupada por outro projeto
   (`ferramentas\servidor.py`); a Etapa 6 precisa tratar isso ao subir o servidor no atalho.
+
+## Etapa 6: Atalho de abertura e documentação · 2026-10-06 · concluída
+**Modelo:** Sonnet 5.5 · **Esforço:** low
+
+**O que foi feito**
+- `Flight Scanner.cmd` (UTF-8, CRLF): se `GET /api/rotas` na 8765 já responde com `max_ativas`, só abre o navegador;
+  se a porta é de outro programa, avisa e sai com código 1; senão sobe `pythonw -m uvicorn scanner.web.app:app
+  --host 127.0.0.1 --port 8765 --no-access-log` (saída em `logs\interface.log`), espera até 30 s o servidor responder
+  e abre a página. `Fast scanner.cmd` ficou como estava.
+- `POST /api/desligar` em `scanner/web/app.py` (corpo `{"confirmar": true}` obrigatório; `criar_app(desligar=...)`
+  para os testes; `encerrar_servidor()` manda SIGINT 0,5 s depois da resposta e usa `os._exit` se não sair em 5 s).
+  2 testes em `tests/test_web.py`, escritos antes e vistos falhando (TypeError por `desligar` desconhecido).
+- Tela de status: cartão "Interface" com o botão "Desligar interface" (diálogo de confirmação; depois a página vira
+  "Interface desligada").
+- `README.md`: seção "Interface gráfica" (como abrir, o que cada tela faz, log, porta ocupada, subir à mão).
+  `CLAUDE.md`: o atalho, o `/api/desligar` e a dica de teste do `.cmd`.
+
+**Skills usadas**
+- run: não carregada; subi e conferi o atalho de verdade (processos, porta, log) e a página no navegador embutido.
+- superpowers:test-driven-development (fora da lista): os 2 testes do `/api/desligar`.
+
+**Desvios do plano**
+- O corpo `{"confirmar": true}` no `/api/desligar` não estava no plano: serve para uma página de outro site não
+  conseguir desligar o servidor com um POST simples (precisa de JSON, que exige preflight sem CORS liberado).
+- O atalho confere que a 8765 é mesmo a interface (e não o `ferramentas\servidor.py`) em vez de só ver se a porta
+  responde; o plano só dizia "se já estiver no ar".
+- Um `.cmd` sempre abre uma janela de console por um instante; o servidor em si roda sem janela (pythonw) e a janela do
+  atalho fecha sozinha ao terminar.
+
+**Problemas e correções**
+- `desligarInterface` usava `evento.currentTarget` depois do `await confirmar(...)`; vira `null` e `comBotao` quebrava
+  antes do POST (console: "Cannot set properties of null"). Corrigido guardando o botão antes do `await`.
+  Peguei no navegador, não nos testes: os testes de API não exercitam o JavaScript.
+- Meu teste do `.cmd` pelo Git Bash falhou por aspas (`'Flight' não é reconhecido`), e pelo PowerShell a chamada ficou
+  pendurada: o servidor herda a pipe da ferramenta e a chamada só termina quando ele fecha. No duplo clique não ocorre.
+  Anotado no `CLAUDE.md`.
+- Dois testes meus no navegador deram falso negativo: cliquei no botão por referência com o diálogo ainda sem abrir
+  (nenhum POST saiu) e o `app.js` novo vinha do cache; refeito checando cada passo.
+
+**Observações**
+- O `pythonw.exe` do `.venv` é um launcher que abre o pythonw de verdade como filho: aparecem 2 processos; o SIGINT
+  encerrou os dois e o log mostrou o desligamento normal ("Shutting down … Finished server process").
+- A 8765 estava livre nesta sessão; simulei o outro programa com `python -m http.server 8765`, depois encerrei.
+- O servidor sem `--reload` serve `app.js`/`estilo.css` do disco, mas o navegador pode ter cópia em cache.
+
+**Verificação**
+- `.\.venv\Scripts\python.exe -m pytest`: 105 passaram, 0 falharam. `node --check app.js`: ok.
+- "Pronto quando": duplo clique (pelo PowerShell) sobe o servidor sem processo de console e a página abre em
+  `http://127.0.0.1:8765` (`GET /api/rotas` 200, log em `logs\interface.log`): ok. Rodar de novo: saiu em 0,2 s com
+  código 0 e continuou 1 servidor (2 processos com o launcher): ok. "Desligar interface": Cancelar não desliga;
+  confirmar mostra "Interface desligada", a 8765 deixa de ouvir e os processos somem: ok.
+- Porta ocupada por outro programa: mensagem em português com acentos, código 1, nenhum servidor novo: ok.
+- NÃO conferido: o duplo clique real no Explorer (a janela do `.cmd` piscando e fechando) e a aba abrir no navegador
+  padrão do usuário; usei a chamada pelo PowerShell.
+
+**Pendências**
+- Etapa 7 (opcional) depende de decisão do usuário e do firewall; a Etapa 8 deve revisar o `/api/desligar` e o
+  `fast_flights` carregando o `.env` ao ser importado.

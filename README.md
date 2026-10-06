@@ -94,6 +94,34 @@ Para escolher os parâmetros na hora, sem editar o `config.yaml`:
 
 Mostra os melhores voos de cada combinação de datas, com o link do Google Flights.
 
+## Interface gráfica
+
+Tudo o que o `config.yaml` e o terminal fazem também dá para fazer numa página no navegador.
+Dê dois cliques em **`Flight Scanner.cmd`**: se o servidor ainda não estiver no ar, ele sobe sem
+deixar janela de console e abre `http://127.0.0.1:8765`. Rodar de novo só abre a página.
+A página só responde neste PC. As buscas agendadas (seção 4) não dependem dela: rodam com a
+interface aberta ou não. O `Fast scanner.cmd`, com a busca pelo terminal, continua como está.
+
+- **Buscar agora**: a busca avulsa do terminal, com o progresso na tela, e depois "Monitorar esta
+  busca" para guardar a rota no `config.yaml`. Antes de buscar, mostra quantas combinações de datas
+  serão consultadas e pede confirmação acima de 30.
+- **Monitoradas**: as rotas do `config.yaml` (no máximo 3 ativas) com datas, passageiros, filtros
+  e queda para alertar; dá para editar, pausar, retomar e remover (o histórico de uma rota
+  removida continua guardado).
+- **Histórico**: gráfico do menor preço a cada busca, uma linha por combinação de datas, com o
+  preço máximo da rota e os alertas enviados; tabela do menor preço já visto por combinação; e o
+  relatório de horários (quais horas e dias da semana costumam ter preço mais baixo).
+- **Status**: última execução, tarefa agendada, cota da SerpApi, avisos e erros recentes dos logs;
+  os botões "Rodar agora", "Rodar sem enviar (teste)" e "Testar notificação"; e
+  **Desligar interface**, que encerra o servidor.
+
+Logs do servidor: `logs\interface.log`. Se o `Flight Scanner.cmd` avisar que a porta 8765 está em
+uso por outro programa, feche-o e tente de novo. Para subir o servidor à mão, em outra porta:
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn scanner.web.app:app --port 8766
+```
+
 ## 4. Agendamento automático
 
 ```powershell

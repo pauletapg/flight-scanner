@@ -397,6 +397,27 @@ def test_notificacao_com_falha_no_envio(cliente, monkeypatch):
     assert r.status_code == 502 and "sem internet" in r.json()["detail"]
 
 
+def test_desligar_interface_pede_o_encerramento(caminhos):
+    pedidos = []
+    app = web.criar_app(caminho_config=caminhos["config"], caminho_banco=caminhos["banco"],
+                        caminho_log=caminhos["log"], consultar_tarefas=lambda: [], desligar=lambda: pedidos.append(1))
+    cliente = TestClient(app)
+    assert cliente.post("/api/desligar", json={"confirmar": True}).json() == {"ok": True}
+    assert pedidos == [1]
+
+
+def test_desligar_interface_exige_confirmacao(caminhos):
+    pedidos = []
+    app = web.criar_app(caminho_config=caminhos["config"], caminho_banco=caminhos["banco"],
+                        caminho_log=caminhos["log"], consultar_tarefas=lambda: [], desligar=lambda: pedidos.append(1))
+    cliente = TestClient(app)
+    for corpo in ({}, {"confirmar": False}):
+        r = cliente.post("/api/desligar", json=corpo)
+        assert r.status_code == 422 and "confirmar" in r.json()["detail"]
+    assert cliente.post("/api/desligar").status_code == 422  # sem corpo (ex.: formulário de outra página)
+    assert pedidos == []
+
+
 # --- página -----------------------------------------------------------------------------------------------
 
 def test_pagina_inicial(cliente):

@@ -1422,6 +1422,26 @@ async function testarNotificacao(evento) {
   });
 }
 
+async function desligarInterface(evento) {
+  const botao = evento.currentTarget; // vira null depois do await
+  const ok = await confirmar("Desligar a interface",
+    "Encerra o servidor desta página. Uma busca avulsa ou um \"Rodar agora\" em andamento pode ser interrompido; " +
+    "as buscas agendadas continuam normalmente.", "Desligar", { perigo: true });
+  if (!ok) return;
+  await comBotao(botao, async () => {
+    try {
+      await api("POST", "/api/desligar", { confirmar: true });
+    } catch (erro) {
+      avisar(erro.message, "erro");
+      return;
+    }
+    pararAcompanhamento();
+    document.body.replaceChildren(h("main", null,
+      h("h1", null, "Interface desligada"),
+      h("p", { class: "explica" }, "Pode fechar esta aba. Para abrir de novo, dê dois cliques em \"Flight Scanner.cmd\".")));
+  });
+}
+
 // --- topo: próxima execução agendada ----------------------------------------------------------------------
 
 function desenharProxima(tarefas) {
@@ -1454,6 +1474,7 @@ document.getElementById("atualizar-status").addEventListener("click", carregarSt
 document.getElementById("rodar-agora").addEventListener("click", () => executar(false));
 document.getElementById("rodar-teste").addEventListener("click", () => executar(true));
 document.getElementById("testar-notificacao").addEventListener("click", testarNotificacao);
+document.getElementById("desligar-interface").addEventListener("click", desligarInterface);
 document.getElementById("rota-historico").addEventListener("change", (evento) => {
   historicoRota = evento.target.value;
   comboDestaque = null;

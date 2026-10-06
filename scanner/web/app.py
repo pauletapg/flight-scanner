@@ -4,7 +4,11 @@ Rodar: .\\.venv\\Scripts\\python.exe -m uvicorn scanner.web.app:app --port 8765
 A lógica fica nos mesmos módulos da CLI (rotas, busca_avulsa, relatorio, historico, notificar);
 aqui só há a tradução para HTTP."""
 
+import os
+import signal
 import sys
+import threading
+import time
 from contextlib import asynccontextmanager, closing
 from datetime import date
 from pathlib import Path
@@ -101,6 +105,10 @@ class PedidoExecucao(BaseModel):
     dry_run: bool = False
 
 
+class PedidoDesligar(BaseModel):
+    confirmar: Literal[True]  # corpo JSON obrigatório: um formulário de outra página não desliga o servidor
+
+
 _ERROS_PYDANTIC = {
     "missing": "campo obrigatório",
     "greater_than_equal": "precisa ser no mínimo {ge}",
@@ -128,9 +136,21 @@ def _comando_padrao() -> list[str]:
     return [str(python), "-m", "scanner.main"]
 
 
+def encerrar_servidor() -> None:
+    """Depois de a resposta sair, pede ao uvicorn para parar (como Ctrl+C); se não parar em 5 s, encerra à força."""
+    def sair():
+        time.sleep(0.5)
+        signal.raise_signal(signal.SIGINT)
+        time.sleep(5)
+        os._exit(0)
+
+    threading.Thread(target=sair, daemon=True).start()
+
+
 def criar_app(caminho_config: Path | None = None, caminho_banco: Path = CAMINHO_BANCO,
               caminho_log: Path = CAMINHO_LOG, consultar_tarefas=status.consultar_tarefas,
-              comando_scanner: list[str] | None = None, arquivo_env: Path | None = None) -> FastAPI:
+              comando_scanner: list[str] | None = None, arquivo_env: Path | None = None,
+              desligar=encerrar_servidor) -> FastAPI:
     """Sem caminho_config, usa rotas.CAMINHO_CONFIG (lido na hora de cada requisição)."""
 
     @asynccontextmanager
@@ -291,6 +311,11 @@ def criar_app(caminho_config: Path | None = None, caminho_banco: Path = CAMINHO_
             raise HTTPException(422, f"Notificação não configurada: {erro}.")
         except Exception as erro:
             raise HTTPException(502, f"Falha ao enviar a notificação: {erro}")
+        return {"ok": True}
+
+    @app.post("/api/desligar")
+    def desligar_interface(pedido: PedidoDesligar):
+        desligar()
         return {"ok": True}
 
     app.mount("/", StaticFiles(directory=PASTA_STATIC, html=True), name="static")
