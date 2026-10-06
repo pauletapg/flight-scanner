@@ -257,6 +257,30 @@ def test_busca_inexistente(cliente):
     assert cliente.get("/api/busca/nao-existe").status_code == 404
 
 
+def test_previa_conta_as_combinacoes_sem_buscar(cliente, monkeypatch):
+    monkeypatch.setattr(pesquisa, "buscar", lambda *a, **kw: pytest.fail("a prévia não pode buscar"))
+    r = cliente.post("/api/busca/previa", json={"rota": nova_rota(None)})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"n": 2, "limite": 30, "nome": "RIO → REC"}
+    passado = nova_rota("X", ida_entre=["2020-01-01", "2020-01-02"])
+    assert cliente.post("/api/busca/previa", json={"rota": passado}).json()["n"] == 0
+    sem_datas = {"origem": "RIO", "destino": "REC"}
+    assert cliente.post("/api/busca/previa", json={"rota": sem_datas}).status_code == 422
+
+
+def test_busca_atual_para_a_pagina_retomar(cliente, buscador):
+    assert cliente.get("/api/busca").json() is None
+    buscador.clear()
+    id_ = cliente.post("/api/busca", json={"rota": nova_rota("X")}).json()["id"]
+    atual = cliente.get("/api/busca").json()
+    assert atual["id"] == id_ and atual["estado"] == "rodando"
+    # A rota completa, no formato do config, para refazer o formulário e para "Monitorar esta busca".
+    assert atual["config"]["origem"] == "RIO" and atual["config"]["ida_entre"][0] == str(IDA)
+    buscador.set()
+    esperar(cliente, f"/api/busca/{id_}")
+    assert cliente.get("/api/busca").json()["estado"] == "concluida"
+
+
 # --- histórico ------------------------------------------------------------------------------------------
 
 @pytest.fixture

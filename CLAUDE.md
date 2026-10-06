@@ -23,9 +23,14 @@ Detalhes de uso no README.md. Textos, comentários e documentação em portuguê
   a cota da SerpApi e o `schtasks` (colunas pela posição, porque os títulos mudam com o idioma).
 - A página fica em `scanner/web/static/` (sem build, sem CDN): `index.html` (as 4 telas por `#hash`), `estilo.css`
   (direção visual e tokens de cor/tipo no topo; claro e escuro) e `app.js` (JavaScript puro; elementos criados com
-  `h(...)`, nunca `innerHTML` com dados; `api()` lança `Error` com o `detail`; `lerFormularioRota` monta o corpo
-  de `RotaEntrada` e serve também para a tela "Buscar agora"). Para ver no navegador embutido: configuração
+  `h(...)`, nunca `innerHTML` com dados; `api()` lança `Error` com o `detail`). Os campos de rota ficam no
+  `<template id="campos-rota">`, copiado para a edição e para "Buscar agora" no lugar de `[data-campos-rota]`;
+  `lerFormularioRota`/`preencherFormularioRota` leem pelos nomes e ignoram os que o formulário não tem.
+  Diálogos respondem por `esperarResposta(dialogo, aoConfirmar)`. Para ver no navegador embutido: configuração
   `interface` do `.claude/launch.json` (porta 8766, com `--reload`).
+- Busca avulsa pela API: `POST /api/busca/previa` só conta as combinações (a página mostra antes e confirma acima
+  de 30, mandando `forcar`); `GET /api/busca` devolve a busca em andamento ou a última, com a rota completa em
+  `config` (a página retoma o progresso e o "Monitorar esta busca" usa essa rota, não o formulário).
 - Erros da API sempre em `{"detail": "<mensagem em português>"}`; os de `ErroRota` levam também `ativas` ou `nomes`.
 - Nos testes, `tests/conftest.py` aponta `rotas.CAMINHO_CONFIG` para um arquivo inexistente: quem precisa de
   config usa `tmp_path` (passando `caminho=` ou com monkeypatch). Nunca gravar no `config.yaml` real.

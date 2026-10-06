@@ -219,3 +219,83 @@
   protegidos; a Etapa 8 pode avaliar se vale mais alguma proteção.
 - Etapa 4: reaproveitar `lerFormularioRota`/`preencherFormularioRota` e trocar `TELA_INICIAL` para `buscar`.
 - A porta 8765 continua ocupada pelo outro programa (decisão da Etapa 6).
+
+## Etapa 4: Tela "Buscar agora" · 2026-10-05 · concluída
+**Modelo:** Opus 5.5 (a skill fixa Sonnet, mas a sessão mostrou Opus 5.5) · **Esforço:** medium
+
+**O que foi feito**
+- API: `POST /api/busca/previa` (conta as combinações sem buscar: `n`, `limite`, `nome`) e `GET /api/busca`
+  (a busca em andamento ou a última). O estado da busca ganhou `config`, a rota completa no formato do config.
+  `tarefas.Buscas.atual()`.
+- `index.html`: os campos de rota saíram do diálogo de edição para o `<template id="campos-rota">`, copiado para a
+  edição e para a busca. Tela "Buscar agora": formulário (os campos da CLI, mais "Resultados a mostrar" (top) e
+  "Consultar o preço das agências" (reservas)), contagem de buscas ao vivo, quadro de progresso, resultados,
+  "Monitorar esta busca" e o diálogo "As 3 vagas estão em uso".
+- `app.js`: `esperarResposta(dialogo, aoConfirmar)` (o mecanismo do `confirmar` da Etapa 3, generalizado);
+  prévia com atraso de 400 ms e descarte de respostas fora de ordem; confirmação acima de 30 (manda `forcar`);
+  acompanhamento a cada 1,5 s (continua em outra tela e avisa no fim); botão travado em "Buscando…"; ao abrir a
+  tela, retoma a busca em andamento ou mostra a última (e refaz o formulário, se a pessoa ainda não mexeu nele);
+  resultados como fitas (preço total em destaque, agência quando mais barata, datas com dia da semana e dias,
+  saída, chegada (+1 dia), escalas, duração da ida, companhias, link); "Mostrar todas as N opções" além do top;
+  "Monitorar" usa a rota buscada (não o formulário) e, com 409 + `ativas`, pergunta qual substituir.
+  `TELA_INICIAL` passou a `buscar`.
+- `estilo.css`: régua da busca (uma casa por combinação: azul = achou voo, hachurada = nenhum nos filtros,
+  vermelha = falhou, contorno piscando = buscando agora), legenda, fitas de voo, opções do diálogo,
+  `.quadro[hidden]`.
+- `tests/test_web.py`: 2 testes novos (prévia e busca atual). `CLAUDE.md` atualizado.
+
+**Skills usadas**
+- anthropic-skills:frontend-design: a direção da Etapa 3 foi mantida; a peça nova (a régua com uma casa por
+  combinação, no mesmo desenho das vagas) foi escolhida para mostrar o resultado de cada data, não só a porcentagem.
+- run: não carregada como skill; o `preview_start` da configuração `interface` recusou a porta 8766 (servidor de
+  outra conversa) e abri a página pelo endereço (ver Desvios).
+- anthropic-skills:built-in-browser: busca real, monitorar e remover na 8766; o resto num servidor de cópia.
+- superpowers:test-driven-development (fora da lista): os 2 testes da API escritos antes e vistos falhando (404).
+
+**Desvios do plano**
+- Endpoints novos `POST /api/busca/previa` e `GET /api/busca`, que o plano não previa: a prévia evita repetir no
+  JavaScript a conta de `filtros.combinacoes` (datas no passado, pares fixos, repetidas); a busca atual permite
+  recarregar a página sem perder o progresso.
+- A cor de cada casa da régua vem do texto da linha de progresso (`tipoLinha` no `app.js`: "falhou (",
+  "nenhum nos filtros"). Se as mensagens de `busca_avulsa.buscar` mudarem, a régua perde as cores (a contagem
+  continua certa).
+- Testado com o servidor da 8766 de outra conversa (aberto com `--reload`, então serviu o código novo) e, para
+  substituição, confirmação acima de 30, cores da régua e "mostrar todas", num servidor na 8767 com cópia do config
+  (3 ativas) e buscador falso (script no scratchpad).
+
+**Problemas e correções**
+- Um "null" aparecia como texto embaixo dos resultados → `replaceChildren(..., null)` converte o `null` em texto
+  (o `h()` filtra, o `replaceChildren` não) → monto a lista num array e só acrescento o botão quando precisa.
+- O heredoc do Bash quebrou ao gravar o trecho de JavaScript ("unexpected EOF"); passei a usar a ferramenta de
+  edição. Mesmo tipo de problema das Etapas 1 a 3.
+- No servidor de cópia, o atraso do buscador falso (`time.sleep`) não funcionava: o script anulava
+  `busca_avulsa.time.sleep`, que é o mesmo módulo `time`. Troquei por `threading.Event().wait` para ver o
+  estado no meio da busca.
+- O primeiro carregamento na 8766 teve um 404 em `GET /api/busca`: o JavaScript novo chegou antes de o
+  `--reload` recarregar o Python. Sumiu ao recarregar.
+
+**Observações**
+- `preview_start` com uma URL `http://127.0.0.1:<porta>` abre no navegador embutido um servidor que esta sessão não
+  iniciou (outra conversa, ou um script em segundo plano).
+- A rota criada pela interface sem filtros grava `filtros: {}` (mesmo formato da Etapa 2).
+- O estado das buscas fica na memória do servidor: reiniciar o servidor apaga a "última busca".
+
+**Verificação**
+- `.\.venv\Scripts\python.exe -m pytest`: 102 passaram, 0 falharam. `node --check app.js`: ok.
+- Busca real pequena (GIG → REC, ida 20/11/2026, 5 dias, 1 adulto) no navegador embutido: progresso `[0/1]` →
+  `[1/1]`, botão travado durante a busca, resultado R$ 1.134 (Gol, direto, 11:05) com o link do Google Flights. ok.
+- Recarregar a página trouxe de volta o formulário e os resultados da última busca. ok.
+- "Monitorar" (nome "Teste Etapa 4 (GIG → REC)", queda 15%) gravou a rota no `config.yaml` real no formato da
+  CLI; `buscar --listar` e a tela "Monitoradas" mostraram a rota (2 de 3 vagas); removida pela interface e o
+  `config.yaml` voltou idêntico (sha256 `a704540…`). ok.
+- Na cópia: contagem "35 buscas … acima de 30, pede confirmação"; Cancelar não busca; confirmar faz as 35. Régua
+  com casas achou/nenhum/falhou e a casa atual piscando; a segunda busca ao mesmo tempo responde 409. "Mostrando 10
+  de 30" e "Mostrar todas". Com 3 ativas, "Monitorar" abre o diálogo (Substituir desabilitado até escolher;
+  Cancelar não muda nada; substituir "Copia C" funcionou). Edição de rota depois da troca para `<template>`:
+  campos preenchidos, aviso de passageiros, salvar. ok.
+- 375 px no modo escuro sem rolagem horizontal. Console: só os 409 provocados de propósito. ok.
+
+**Pendências**
+- O `fast_flights` carrega o `.env` ao ser importado (pendência da Etapa 3, para a Etapa 8).
+- A porta 8765 continua ocupada pelo outro programa (decisão da Etapa 6).
+- Etapa 5: o histórico pode reaproveitar `fita`/`campo`, `diaCurto` e `textoPassageiros` do `app.js`.

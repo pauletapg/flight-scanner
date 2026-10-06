@@ -69,16 +69,10 @@ function avisar(texto, tipo = "ok") {
   setTimeout(() => toast.remove(), tipo === "erro" ? 9000 : 4500);
 }
 
-/** Diálogo de confirmação; devolve true se a pessoa confirmou. `perigo` pinta o botão de vermelho.
- * A resposta vem do submit (síncrono), não do evento "close", que o navegador pode atrasar. */
-function confirmar(titulo, texto, botao, { perigo = false } = {}) {
-  const dialogo = document.getElementById("dialogo-confirmar");
+/** Abre o diálogo e espera: devolve `aoConfirmar()` se a pessoa usou o botão value="sim", ou null se cancelou
+ * (outro botão ou Esc). A resposta vem do submit (síncrono), não do evento "close", que o navegador pode atrasar. */
+function esperarResposta(dialogo, aoConfirmar) {
   const form = dialogo.querySelector("form");
-  const confirma = document.getElementById("botao-confirmar");
-  document.getElementById("titulo-confirmar").textContent = titulo;
-  document.getElementById("texto-confirmar").textContent = texto;
-  confirma.textContent = botao;
-  confirma.classList.toggle("perigo-cheio", perigo);
   dialogo.showModal();
   return new Promise((resolver) => {
     const terminar = (resposta) => {
@@ -89,15 +83,25 @@ function confirmar(titulo, texto, botao, { perigo = false } = {}) {
     };
     const aoEnviar = (evento) => {
       evento.preventDefault();
-      terminar(Boolean(evento.submitter && evento.submitter.value === "sim"));
+      terminar(evento.submitter && evento.submitter.value === "sim" ? aoConfirmar() : null);
     };
     const aoCancelar = (evento) => {
       evento.preventDefault();
-      terminar(false);
+      terminar(null);
     };
     form.addEventListener("submit", aoEnviar);
     dialogo.addEventListener("cancel", aoCancelar); // tecla Esc
   });
+}
+
+/** Diálogo de confirmação; devolve true se a pessoa confirmou. `perigo` pinta o botão de vermelho. */
+async function confirmar(titulo, texto, botao, { perigo = false } = {}) {
+  const confirma = document.getElementById("botao-confirmar");
+  document.getElementById("titulo-confirmar").textContent = titulo;
+  document.getElementById("texto-confirmar").textContent = texto;
+  confirma.textContent = botao;
+  confirma.classList.toggle("perigo-cheio", perigo);
+  return (await esperarResposta(document.getElementById("dialogo-confirmar"), () => true)) === true;
 }
 
 /** Desabilita o botão enquanto a ação roda. */
@@ -113,12 +117,12 @@ async function comBotao(botao, acao) {
 // --- navegação --------------------------------------------------------------------------------------------
 
 const TELAS = {
-  buscar: null,
+  buscar: () => carregarBusca(),
   rotas: () => carregarRotas(),
   historico: null,
   status: () => carregarStatus(),
 };
-const TELA_INICIAL = "rotas"; // enquanto "Buscar agora" não existe (Etapa 4)
+const TELA_INICIAL = "buscar";
 
 function mostrarTela() {
   const nome = location.hash.slice(1) in TELAS ? location.hash.slice(1) : TELA_INICIAL;
@@ -264,7 +268,7 @@ async function removerRota(botao, rota) {
   carregarRotas();
 }
 
-// --- formulário de rota (edição; a Etapa 4 reaproveita lerFormularioRota) ---------------------------------
+// --- formulário de rota (edição e "Buscar agora": os campos comuns vêm do <template id="campos-rota">) ------
 
 let rotaEmEdicao = null;
 
@@ -297,12 +301,14 @@ function preencherFormularioRota(form, rota) {
     duracao_max_horas: f.duracao_max_horas ?? "",
     queda_percentual: (rota.alerta || {}).queda_percentual ?? 10,
   };
-  for (const [nome, valor] of Object.entries(valores)) form.elements[nome].value = valor;
+  for (const [nome, valor] of Object.entries(valores)) {
+    if (form.elements[nome]) form.elements[nome].value = valor; // a busca não tem nome nem queda %
+  }
 }
 
 /** Lê o formulário no formato de RotaEntrada da API. Lança Error com mensagem para a pessoa. */
 function lerFormularioRota(form) {
-  const v = (nome) => form.elements[nome].value.trim();
+  const v = (nome) => (form.elements[nome] ? form.elements[nome].value.trim() : "");
   const numero = (nome) => (v(nome) === "" ? null : Number(v(nome)));
   const rota = {
     nome: v("nome") || null,
@@ -359,7 +365,7 @@ function atualizarAvisoPassageiros() {
   const antes = [original.adultos ?? 1, original.criancas ?? 0, original.bebes_colo ?? 0].join("/");
   const mudouPassageiros = passageirosDoFormulario(form) !== antes;
   const mesmoNome = form.elements.nome.value.trim() === original.nome;
-  document.getElementById("aviso-passageiros").hidden = !(mudouPassageiros && mesmoNome);
+  form.querySelector(".aviso-passageiros").hidden = !(mudouPassageiros && mesmoNome);
 }
 
 function abrirEdicao(rota) {
@@ -395,6 +401,317 @@ async function salvarEdicao(evento) {
       erroForm.textContent = erro.message;
       erroForm.hidden = false;
     }
+  });
+}
+
+// --- buscar agora -----------------------------------------------------------------------------------------
+
+let buscaAtual = null; // último estado de GET /api/busca/{id}; config = a rota no formato do config.yaml
+let acompanhamentoBusca = null;
+let previaTimer = null;
+let previaPedida = 0; // descarta respostas da prévia que chegam fora de ordem
+let formBuscaMexido = false; // depois que a pessoa mexe, a página não refaz o formulário com a última busca
+let todosResultados = false;
+
+function mostrarErro(alvo, texto) {
+  alvo.textContent = texto;
+  alvo.hidden = false;
+}
+
+/** "2026-12-20" → "sáb 20/12". */
+function diaCurto(iso) {
+  const semana = new Date(`${iso}T12:00:00`).toLocaleDateString("pt-BR", { weekday: "short" }).replace(".", "");
+  return `${semana} ${data(iso).slice(0, 5)}`;
+}
+
+function diasEntre(inicio, fim) {
+  const meioDia = (iso) => new Date(`${iso.slice(0, 10)}T12:00:00`);
+  return Math.round((meioDia(fim) - meioDia(inicio)) / 86400000);
+}
+
+function textoDatasVoo(v) {
+  if (!v.volta) return `${diaCurto(v.ida)} (só ida)`;
+  return `${diaCurto(v.ida)} → ${diaCurto(v.volta)} · ${plural(diasEntre(v.ida, v.volta), "dia", "dias")}`;
+}
+
+function textoDuracao(minutos) {
+  return `${Math.floor(minutos / 60)}h${String(minutos % 60).padStart(2, "0")}`;
+}
+
+/** Resultado de cada combinação, pelo texto que busca_avulsa.buscar manda no progresso:
+ * "...: falhou (motivo)", "...: N voo(s), nenhum nos filtros" ou "...: N voo(s), melhor R$ X". */
+function tipoLinha(texto) {
+  if (/: falhou \(/.test(texto)) return "falhou";
+  if (/nenhum nos filtros$/.test(texto)) return "vazia";
+  return "achou";
+}
+
+function desenharProgresso(busca) {
+  const rodando = busca.estado === "rodando";
+  const tipos = new Map(busca.linhas.filter((l) => l.i !== null).map((l) => [l.i, tipoLinha(l.texto)]));
+  const regua = document.getElementById("regua-busca");
+  regua.replaceChildren(...Array.from({ length: busca.n }, (_, k) => {
+    const tipo = tipos.get(k + 1);
+    const agora = rodando && !tipo && k === busca.i; // a combinação que está sendo buscada
+    return h("span", { class: `casa${tipo ? ` ${tipo}` : ""}${agora ? " agora" : ""}` });
+  }));
+  regua.setAttribute("aria-valuemin", "0");
+  regua.setAttribute("aria-valuemax", String(busca.n));
+  regua.setAttribute("aria-valuenow", String(busca.i));
+  regua.setAttribute("aria-valuetext", `${busca.i} de ${busca.n} buscas feitas`);
+
+  const titulo = document.getElementById("titulo-progresso");
+  titulo.className = rodando ? "rodando" : "";
+  titulo.textContent = rodando ? `Buscando: ${busca.rota}`
+    : busca.estado === "concluida" ? `Busca concluída: ${busca.rota}` : `A busca parou com erro: ${busca.rota}`;
+  document.getElementById("contador-busca").textContent = `[${busca.i}/${busca.n}]`;
+
+  const linhas = busca.linhas.map((l) => (l.i !== null ? `[${l.i}/${l.n}] ${l.texto}` : l.texto));
+  if (busca.erro) linhas.push(`Erro: ${busca.erro}`);
+  const saida = document.getElementById("linhas-busca");
+  saida.textContent = linhas.length ? linhas.join("\n") : "Começando a primeira busca…";
+  saida.scrollTop = saida.scrollHeight;
+  document.getElementById("quadro-progresso").hidden = false;
+}
+
+function fitaVoo(v, maisBarato) {
+  const agencia = v.reserva_preco && v.reserva_preco < v.preco;
+  const diasChegada = diasEntre(v.partida, v.chegada);
+  const link = /^https:\/\//.test(v.link || "") ? v.link : null;
+  return h("article", { class: "fita voo", "aria-label": `${dinheiro(v.menor_preco)}, ${textoDatasVoo(v)}` },
+    h("div", { class: "fita-id" },
+      h("div", { class: "preco" }, dinheiro(v.menor_preco)),
+      h("div", { class: "fita-nome" }, agencia ? `total em ${v.reserva_onde}` : "total no Google Flights"),
+      agencia ? h("div", { class: "fita-nome" }, `${dinheiro(v.preco)} no Google Flights`) : null,
+      maisBarato ? h("span", { class: "estado" }, "Mais barato") : null,
+    ),
+    h("dl", { class: "fita-campos" },
+      campo("Datas", textoDatasVoo(v)),
+      campo("Saída", h("span", { class: "hora" }, v.partida.slice(11, 16))),
+      campo("Chegada", h("span", { class: "hora" }, v.chegada.slice(11, 16)),
+        diasChegada > 0 ? ` (+${plural(diasChegada, "dia", "dias")})` : ""),
+      campo("Escalas", v.escalas === 0 ? "direto" : plural(v.escalas, "escala", "escalas")),
+      campo("Duração da ida", textoDuracao(v.duracao_min)),
+      campo("Companhias", v.companhias),
+    ),
+    h("div", { class: "fita-acoes" },
+      link
+        ? h("a", { class: "botao primario", href: link, target: "_blank", rel: "noopener noreferrer" }, "Abrir no Google Flights")
+        : h("span", { class: "secundario" }, "Sem link")),
+  );
+}
+
+function desenharResultados(busca) {
+  const secao = document.getElementById("resultados");
+  secao.hidden = busca.estado !== "concluida";
+  if (secao.hidden) return;
+  const voos = busca.resultados;
+  const top = Math.max(1, Number(document.getElementById("form-busca").elements.top.value) || 10);
+  const mostrar = todosResultados ? voos.length : Math.min(top, voos.length);
+  const resumo = [`Preço total para ${textoPassageiros(busca.config)}; o melhor voo de cada combinação de datas`];
+  if (mostrar < voos.length) resumo.push(`mostrando ${mostrar} de ${voos.length}`);
+  document.getElementById("resumo-resultados").textContent = resumo.join(" · ");
+  const lista = document.getElementById("lista-resultados");
+  if (!voos.length) {
+    lista.replaceChildren(h("p", { class: "vazio" },
+      "Nenhum voo passou nos filtros. Afrouxe os filtros (preço, escalas, duração do voo) ou tente outras datas."));
+    return;
+  }
+  const verTodas = () => {
+    todosResultados = true;
+    desenharResultados(busca);
+  };
+  const fitas = voos.slice(0, mostrar).map((v, k) => fitaVoo(v, k === 0));
+  if (mostrar < voos.length) {
+    fitas.push(h("button", { type: "button", class: "botao discreto mais", onclick: verTodas }, `Mostrar todas as ${voos.length} opções`));
+  }
+  lista.replaceChildren(...fitas);
+}
+
+function travarBusca(rodando) {
+  const botao = document.getElementById("botao-buscar");
+  botao.disabled = rodando;
+  botao.textContent = rodando ? "Buscando…" : "Buscar voos";
+}
+
+function mostrarBusca(busca) {
+  const nova = !buscaAtual || buscaAtual.id !== busca.id;
+  buscaAtual = busca;
+  travarBusca(busca.estado === "rodando");
+  desenharProgresso(busca);
+  desenharResultados(busca);
+  const monitorar = document.getElementById("form-monitorar");
+  const monitorada = document.getElementById("monitorada");
+  if (nova) {
+    monitorar.elements.nome.value = busca.config.nome;
+    monitorar.elements.queda_percentual.value = 10;
+    document.getElementById("erro-monitorar").hidden = true;
+    monitorada.hidden = true;
+  }
+  monitorar.hidden = busca.estado !== "concluida" || !monitorada.hidden;
+}
+
+/** Consulta a busca a cada 1,5 s até ela terminar (continua mesmo em outra tela e avisa no fim). */
+function acompanharBusca(id) {
+  clearTimeout(acompanhamentoBusca);
+  acompanhamentoBusca = setTimeout(async () => {
+    acompanhamentoBusca = null;
+    let busca;
+    try {
+      busca = await api("GET", `/api/busca/${id}`);
+    } catch (erro) {
+      avisar(erro.message, "erro");
+      travarBusca(false);
+      return;
+    }
+    mostrarBusca(busca);
+    if (busca.estado === "rodando") acompanharBusca(id);
+    else if (busca.estado === "concluida") avisar(`Busca concluída: ${plural(busca.resultados.length, "opção", "opções")} nos filtros.`);
+    else avisar("A busca parou com erro; o motivo está na tela \"Buscar agora\".", "erro");
+  }, 1500);
+}
+
+/** Ao abrir a tela: retoma a busca em andamento (ou mostra a última) e atualiza a contagem. */
+async function carregarBusca() {
+  if (!acompanhamentoBusca) {
+    try {
+      const busca = await api("GET", "/api/busca");
+      if (busca) {
+        if (!formBuscaMexido) preencherFormularioRota(document.getElementById("form-busca"), busca.config);
+        mostrarBusca(busca);
+        if (busca.estado === "rodando") acompanharBusca(busca.id);
+      }
+    } catch (erro) {
+      avisar(`Não consegui ler a última busca: ${erro.message}`, "erro");
+    }
+  }
+  atualizarPrevia();
+}
+
+function agendarPrevia() {
+  formBuscaMexido = true;
+  clearTimeout(previaTimer);
+  previaTimer = setTimeout(atualizarPrevia, 400);
+}
+
+/** "N buscas no Google Flights" antes de buscar, pela mesma conta do servidor (POST /api/busca/previa). */
+async function atualizarPrevia() {
+  const alvo = document.getElementById("contagem");
+  const pedido = ++previaPedida;
+  let rota;
+  try {
+    rota = lerFormularioRota(document.getElementById("form-busca"));
+  } catch {
+    alvo.replaceChildren(h("span", { class: "secundario" },
+      "Preencha origem, destino e as datas de ida para ver quantas buscas serão feitas."));
+    return;
+  }
+  let previa;
+  try {
+    previa = await api("POST", "/api/busca/previa", { rota });
+  } catch (erro) {
+    if (pedido === previaPedida) alvo.replaceChildren(h("span", { class: "ruim" }, erro.message));
+    return;
+  }
+  if (pedido !== previaPedida) return;
+  if (!previa.n) {
+    alvo.replaceChildren(h("span", { class: "ruim" }, "Nenhuma data de ida no futuro."));
+    return;
+  }
+  alvo.replaceChildren(h("b", null, String(previa.n)),
+    ` ${previa.n === 1 ? "busca" : "buscas"} no Google Flights, uma por combinação de datas`,
+    previa.n > previa.limite ? h("span", { class: "atencao" }, ` · acima de ${previa.limite}, pede confirmação`) : "");
+}
+
+async function iniciarBusca(evento) {
+  evento.preventDefault();
+  const form = evento.currentTarget;
+  const erroForm = document.getElementById("erro-busca");
+  erroForm.hidden = true;
+  let rota;
+  try {
+    rota = lerFormularioRota(form);
+  } catch (erro) {
+    mostrarErro(erroForm, erro.message);
+    return;
+  }
+  const reservas = Math.max(0, Number(form.elements.reservas.value) || 0);
+  travarBusca(true);
+  try {
+    const previa = await api("POST", "/api/busca/previa", { rota });
+    if (!previa.n) throw new Error("Nenhuma data de ida no futuro para buscar.");
+    let forcar = false;
+    if (previa.n > previa.limite) {
+      forcar = await confirmar("Muitas buscas de uma vez",
+        `São ${previa.n} buscas. Acima de ${previa.limite}, o Google pode bloquear o acesso por um tempo, e a busca ` +
+        "leva vários minutos. Reduza as datas ou busque mesmo assim.", `Fazer as ${previa.n} buscas`);
+      if (!forcar) {
+        travarBusca(false);
+        return;
+      }
+    }
+    const inicio = await api("POST", "/api/busca", { rota, reservas, forcar });
+    todosResultados = false;
+    mostrarBusca({ id: inicio.id, rota: inicio.rota.nome, config: inicio.rota, estado: "rodando", i: 0,
+      n: inicio.n, linhas: [], resultados: [], erro: null });
+    acompanharBusca(inicio.id);
+  } catch (erro) {
+    mostrarErro(erroForm, erro.message);
+    travarBusca(false);
+    if (erro.status === 409) carregarBusca(); // já há uma busca (de outra aba, por exemplo): acompanha aquela
+  }
+}
+
+/** Diálogo "As 3 vagas estão em uso": devolve o nome da rota ativa escolhida, ou null se cancelou. */
+function escolherSubstituta(ativas) {
+  const dialogo = document.getElementById("dialogo-substituir");
+  const botao = document.getElementById("botao-substituir");
+  botao.disabled = true;
+  const liberar = () => { botao.disabled = false; };
+  document.getElementById("opcoes-substituir").replaceChildren(
+    h("legend", { class: "sr" }, "Rota a substituir"),
+    ...ativas.map((nome) => h("label", { class: "opcao" },
+      h("input", { type: "radio", name: "substituir", value: nome, onchange: liberar }), h("span", null, nome))));
+  return esperarResposta(dialogo, () => {
+    const marcada = dialogo.querySelector('input[name="substituir"]:checked');
+    return marcada ? marcada.value : null;
+  });
+}
+
+async function monitorarBusca(evento) {
+  evento.preventDefault();
+  const form = evento.currentTarget;
+  const erroForm = document.getElementById("erro-monitorar");
+  erroForm.hidden = true;
+  const nome = form.elements.nome.value.trim();
+  const queda = Number(form.elements.queda_percentual.value);
+  if (!nome) return mostrarErro(erroForm, "Dê um nome para a rota.");
+  if (!(queda > 0 && queda < 100)) return mostrarErro(erroForm, "A queda para o alerta vai de 1 a 99%.");
+  // Monitora a rota que foi buscada, não o formulário (que pode ter mudado depois da busca).
+  const rota = { ...buscaAtual.config, nome, alerta: { queda_percentual: queda } };
+  await comBotao(form.querySelector('[type="submit"]'), async () => {
+    let substituir = null;
+    try {
+      try {
+        await api("POST", "/api/rotas", { rota });
+      } catch (erro) {
+        if (!(erro.status === 409 && erro.dados && erro.dados.ativas)) throw erro;
+        substituir = await escolherSubstituta(erro.dados.ativas);
+        if (!substituir) return;
+        await api("POST", "/api/rotas", { rota, substituir });
+      }
+    } catch (erro) {
+      mostrarErro(erroForm, erro.message);
+      return;
+    }
+    form.hidden = true;
+    const monitorada = document.getElementById("monitorada");
+    monitorada.replaceChildren(
+      h("span", null, h("b", null, nome), " está sendo monitorada",
+        substituir ? `, no lugar de "${substituir}"` : "", ". A próxima busca agendada já inclui esta rota. "),
+      h("a", { href: "#rotas" }, "Ver buscas monitoradas"));
+    monitorada.hidden = false;
+    avisar(`Rota monitorada: ${nome}`);
   });
 }
 
@@ -576,6 +893,12 @@ function desenharProxima(tarefas) {
 
 // --- início -----------------------------------------------------------------------------------------------
 
+for (const lugar of document.querySelectorAll("[data-campos-rota]")) {
+  lugar.replaceWith(document.getElementById("campos-rota").content.cloneNode(true));
+}
+document.getElementById("form-busca").addEventListener("submit", iniciarBusca);
+document.getElementById("form-busca").addEventListener("input", agendarPrevia);
+document.getElementById("form-monitorar").addEventListener("submit", monitorarBusca);
 document.getElementById("form-rota").addEventListener("submit", salvarEdicao);
 document.getElementById("form-rota").addEventListener("input", atualizarAvisoPassageiros);
 document.querySelector("#dialogo-editar [data-fechar]").addEventListener("click", () => document.getElementById("dialogo-editar").close());

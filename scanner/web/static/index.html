@@ -23,11 +23,70 @@
   </header>
 
   <main id="conteudo">
-    <!-- Buscar agora: Etapa 4 -->
+    <!-- Buscar agora -->
     <section class="tela" id="tela-buscar" hidden>
       <h1>Buscar agora</h1>
-      <p class="em-breve">Em breve: busca avulsa com progresso e resultados. Por enquanto, use
-        <code>python -m scanner.buscar</code> no terminal.</p>
+      <p class="explica">Procura voos no Google Flights agora, em todas as combinações de datas que você indicar.
+        Nada passa a ser monitorado até você pedir, no fim da busca.</p>
+
+      <form class="quadro" id="form-busca" novalidate>
+        <div class="campos">
+          <div data-campos-rota hidden></div>
+          <label>Resultados a mostrar
+            <input type="number" name="top" min="1" value="10">
+          </label>
+          <label class="inteiro">Consultar o preço das agências nos mais baratos (SerpApi)
+            <input type="number" name="reservas" min="0" value="0" class="curto">
+            <span class="dica">Quantos dos voos mais baratos consultam as "Opções de reserva". Cada um gasta uma
+              consulta da cota mensal da SerpApi. 0: não consultar.</span>
+          </label>
+        </div>
+        <p class="erro-form" id="erro-busca" role="alert" hidden></p>
+        <div class="rodape-busca">
+          <p class="contagem" id="contagem" aria-live="polite"></p>
+          <button type="submit" class="botao primario" id="botao-buscar">Buscar voos</button>
+        </div>
+      </form>
+
+      <article class="quadro" id="quadro-progresso" aria-labelledby="titulo-progresso" hidden>
+        <div class="cabecalho-quadro">
+          <h2 id="titulo-progresso">Buscando</h2>
+          <span class="hora" id="contador-busca"></span>
+        </div>
+        <div class="regua" id="regua-busca" role="progressbar" aria-labelledby="titulo-progresso"></div>
+        <p class="legenda-regua" aria-hidden="true">
+          <span class="casa achou"></span>achou voo <span class="casa vazia"></span>nenhum nos filtros
+          <span class="casa falhou"></span>falhou
+        </p>
+        <pre class="console" id="linhas-busca"></pre>
+      </article>
+
+      <section class="resultados" id="resultados" aria-labelledby="titulo-resultados" hidden>
+        <div class="cabecalho-tela">
+          <h2 id="titulo-resultados">Melhores opções</h2>
+          <span class="secundario" id="resumo-resultados"></span>
+        </div>
+        <div class="fitas" id="lista-resultados"></div>
+      </section>
+
+      <form class="quadro" id="form-monitorar" aria-labelledby="titulo-monitorar" novalidate hidden>
+        <h2 id="titulo-monitorar">Monitorar esta busca</h2>
+        <p class="explica">A tarefa agendada passa a buscar estas datas 12 vezes por dia e avisa no celular quando o
+          preço cair. Usa uma das 3 vagas de busca monitorada.</p>
+        <div class="campos">
+          <label>Nome
+            <input name="nome" required maxlength="120">
+          </label>
+          <label>Alerta quando o preço cair (%)
+            <input type="number" name="queda_percentual" min="1" max="99" step="any" value="10">
+          </label>
+        </div>
+        <p class="erro-form" id="erro-monitorar" role="alert" hidden></p>
+        <div class="botoes">
+          <button type="submit" class="botao primario">Monitorar esta busca</button>
+        </div>
+      </form>
+      <p class="confirmacao" id="monitorada" role="status" hidden></p>
     </section>
 
     <!-- Buscas monitoradas -->
@@ -85,63 +144,10 @@
         <label class="inteiro">Nome
           <input name="nome" required maxlength="120">
         </label>
-        <label>Origem (IATA)
-          <input name="origem" required minlength="3" maxlength="3" autocapitalize="characters" class="iata">
-        </label>
-        <label>Destino (IATA)
-          <input name="destino" required minlength="3" maxlength="3" autocapitalize="characters" class="iata">
-        </label>
-
-        <fieldset class="inteiro">
-          <legend>Datas de ida</legend>
-          <div class="linha">
-            <label>De <input type="date" name="ida_inicio"></label>
-            <label>Até <input type="date" name="ida_fim"></label>
-            <label>A cada (dias) <input type="number" name="passo_dias" min="1" value="1"></label>
-          </div>
-          <label>Datas avulsas, uma por linha
-            <textarea name="datas" rows="3" placeholder="ex.: 20/12/2026&#10;ex.: 22/12/2026 a 05/01/2027"></textarea>
-          </label>
-          <p class="dica">Uma data sozinha é só a ida; "ida a volta" fixa as duas datas.</p>
-        </fieldset>
-
-        <label class="inteiro">Duração da viagem (dias)
-          <input name="duracoes_dias" placeholder="ex.: 6, 7, 8" inputmode="numeric">
-          <span class="dica">Separe por vírgula. Em branco: só ida.</span>
-        </label>
-
-        <fieldset class="inteiro">
-          <legend>Passageiros</legend>
-          <div class="linha">
-            <label>Adultos <input type="number" name="adultos" min="1" value="1"></label>
-            <label>Crianças (2 a 11) <input type="number" name="criancas" min="0" value="0"></label>
-            <label>Bebês de colo <input type="number" name="bebes_colo" min="0" value="0"></label>
-          </div>
-          <p class="aviso" id="aviso-passageiros" hidden>Você mudou os passageiros: troque também o nome, para o
-            histórico não misturar preços de quantidades diferentes de pessoas.</p>
-        </fieldset>
-
-        <label>Classe
-          <select name="classe">
-            <option value="economy">Econômica</option>
-            <option value="premium-economy">Econômica premium</option>
-            <option value="business">Executiva</option>
-            <option value="first">Primeira classe</option>
-          </select>
-        </label>
+        <div data-campos-rota hidden></div>
         <label>Alerta quando o preço cair (%)
           <input type="number" name="queda_percentual" min="1" max="99" step="any">
         </label>
-
-        <fieldset class="inteiro">
-          <legend>Filtros</legend>
-          <div class="linha">
-            <label>Preço máximo (R$, total) <input type="number" name="preco_max" min="1"></label>
-            <label>Escalas no máximo <input type="number" name="escalas_max" min="0"></label>
-            <label>Duração máx. do voo (h) <input type="number" name="duracao_max_horas" min="0.5" step="0.5"></label>
-          </div>
-          <p class="dica">Em branco: sem limite.</p>
-        </fieldset>
       </div>
       <p class="erro-form" id="erro-editar" role="alert" hidden></p>
       <div class="botoes fim">
@@ -161,6 +167,80 @@
       </div>
     </form>
   </dialog>
+
+  <dialog id="dialogo-substituir" class="dialogo" aria-labelledby="titulo-substituir">
+    <form method="dialog">
+      <h2 id="titulo-substituir">As 3 vagas estão em uso</h2>
+      <p>Para monitorar esta busca, escolha qual rota ativa ela vai substituir. A substituída sai do monitoramento;
+        o histórico de preços dela continua guardado.</p>
+      <fieldset class="opcoes" id="opcoes-substituir">
+        <legend class="sr">Rota a substituir</legend>
+      </fieldset>
+      <div class="botoes fim">
+        <button type="submit" class="botao discreto" value="nao">Cancelar</button>
+        <button type="submit" class="botao primario" value="sim" id="botao-substituir" disabled>Substituir</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Campos de uma rota, comuns à edição e à busca (app.js copia para cada formulário no lugar de
+       [data-campos-rota]; lerFormularioRota lê pelos nomes). -->
+  <template id="campos-rota">
+    <label>Origem (IATA)
+      <input name="origem" required minlength="3" maxlength="3" autocapitalize="characters" class="iata">
+    </label>
+    <label>Destino (IATA)
+      <input name="destino" required minlength="3" maxlength="3" autocapitalize="characters" class="iata">
+    </label>
+
+    <fieldset class="inteiro">
+      <legend>Datas de ida</legend>
+      <div class="linha">
+        <label>De <input type="date" name="ida_inicio"></label>
+        <label>Até <input type="date" name="ida_fim"></label>
+        <label>A cada (dias) <input type="number" name="passo_dias" min="1" value="1"></label>
+      </div>
+      <label>Datas avulsas, uma por linha
+        <textarea name="datas" rows="3" placeholder="ex.: 20/12/2026&#10;ex.: 22/12/2026 a 05/01/2027"></textarea>
+      </label>
+      <p class="dica">Uma data sozinha é só a ida; "ida a volta" fixa as duas datas.</p>
+    </fieldset>
+
+    <label class="inteiro">Duração da viagem (dias)
+      <input name="duracoes_dias" placeholder="ex.: 6, 7, 8" inputmode="numeric">
+      <span class="dica">Separe por vírgula. Em branco: só ida.</span>
+    </label>
+
+    <fieldset class="inteiro">
+      <legend>Passageiros</legend>
+      <div class="linha">
+        <label>Adultos <input type="number" name="adultos" min="1" value="1"></label>
+        <label>Crianças (2 a 11) <input type="number" name="criancas" min="0" value="0"></label>
+        <label>Bebês de colo <input type="number" name="bebes_colo" min="0" value="0"></label>
+      </div>
+      <p class="aviso aviso-passageiros" hidden>Você mudou os passageiros: troque também o nome, para o
+        histórico não misturar preços de quantidades diferentes de pessoas.</p>
+    </fieldset>
+
+    <fieldset class="inteiro">
+      <legend>Filtros</legend>
+      <div class="linha">
+        <label>Preço máximo (R$, total) <input type="number" name="preco_max" min="1"></label>
+        <label>Escalas no máximo <input type="number" name="escalas_max" min="0"></label>
+        <label>Duração máx. do voo (h) <input type="number" name="duracao_max_horas" min="0.5" step="0.5"></label>
+      </div>
+      <p class="dica">Em branco: sem limite.</p>
+    </fieldset>
+
+    <label>Classe
+      <select name="classe">
+        <option value="economy">Econômica</option>
+        <option value="premium-economy">Econômica premium</option>
+        <option value="business">Executiva</option>
+        <option value="first">Primeira classe</option>
+      </select>
+    </label>
+  </template>
 
   <div class="avisos" id="avisos" aria-live="polite"></div>
 

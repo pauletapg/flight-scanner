@@ -252,6 +252,68 @@ main { max-width: var(--largura); margin: 0 auto; padding: var(--e5) var(--e4) v
 .botoes { display: flex; gap: var(--e2); flex-wrap: wrap; }
 .botoes.fim { justify-content: flex-end; }
 
+a.botao { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+
+/* --- buscar agora --- */
+
+.rodape-busca {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--e3) var(--e4);
+  flex-wrap: wrap;
+  padding-top: var(--e3);
+  border-top: 1px solid var(--regua);
+}
+.contagem { margin: 0; font-size: 14px; color: var(--tinta-2); }
+.contagem b { font-family: var(--fonte-mono); font-size: 16px; color: var(--tinta); }
+input.curto { max-width: 9em; }
+
+.cabecalho-quadro { display: flex; justify-content: space-between; align-items: baseline; gap: var(--e3); }
+.cabecalho-quadro h2 { color: var(--tinta); overflow-wrap: anywhere; }
+
+/* A régua da busca: uma casa por combinação de datas, como as vagas do suporte de fitas. */
+.regua { display: flex; gap: 3px; height: 22px; }
+.casa { flex: 1 1 0; min-width: 3px; max-width: 28px; border: 1.5px solid var(--regua); border-radius: 1px; }
+.casa.achou { background: var(--azul); border-color: var(--azul); }
+.casa.vazia { border-color: var(--tinta-2); background: repeating-linear-gradient(135deg, var(--tinta-2) 0 2px, transparent 2px 5px); }
+.casa.falhou { background: var(--vermelho); border-color: var(--vermelho); }
+.casa.agora { border-color: var(--azul); animation: pisca .8s ease-in-out infinite alternate; }
+.legenda-regua { margin: 0; display: flex; align-items: center; flex-wrap: wrap; gap: var(--e1) var(--e2); font-size: 12px; color: var(--tinta-2); }
+.legenda-regua .casa { display: inline-block; flex: none; width: 10px; height: 14px; margin-left: var(--e2); }
+.legenda-regua .casa:first-child { margin-left: 0; }
+#linhas-busca { max-height: 240px; }
+
+.resultados { display: flex; flex-direction: column; gap: var(--e3); }
+.resultados[hidden] { display: none; }
+.fita.voo .preco {
+  font-family: var(--fonte-sinal);
+  font-stretch: condensed;
+  font-variation-settings: "wdth" 75;
+  font-weight: 700;
+  font-size: 30px;
+  line-height: 1;
+  letter-spacing: .02em;
+}
+.fita.voo .estado { background: var(--azul); color: var(--azul-texto); }
+.botao.mais { align-self: flex-start; }
+
+.confirmacao { margin: 0; padding: var(--e3) var(--e4); background: var(--azul-claro); border-left: 3px solid var(--azul); }
+.confirmacao[hidden] { display: none; }
+
+.opcoes { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--e2); }
+.opcao {
+  display: flex;
+  align-items: center;
+  gap: var(--e3);
+  padding: var(--e2) var(--e3);
+  border: 1px solid var(--regua);
+  border-radius: var(--canto);
+  cursor: pointer;
+}
+.opcao:has(input:checked) { border-color: var(--azul); background: var(--azul-claro); }
+.opcao input { width: auto; }
+
 /* --- status --- */
 
 .painel-status { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--e3); }
@@ -266,6 +328,7 @@ main { max-width: var(--largura); margin: 0 auto; padding: var(--e5) var(--e4) v
   box-shadow: var(--sombra);
   min-width: 0;
 }
+.quadro[hidden] { display: none; }
 .quadro .corpo { display: flex; flex-direction: column; gap: var(--e2); }
 .destaque { font-family: var(--fonte-sinal); font-size: 22px; font-weight: 600; line-height: 1.15; }
 .hora { font-family: var(--fonte-mono); font-size: 13px; }

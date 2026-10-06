@@ -215,6 +215,16 @@ def criar_app(caminho_config: Path | None = None, caminho_banco: Path = CAMINHO_
         id_ = buscas.iniciar(rota, geral(), n, reservas=pedido.reservas, caminho_banco=caminho_banco)
         return {"id": id_, "n": n, "rota": jsonable_encoder(rota)}
 
+    @app.post("/api/busca/previa")
+    def previa_busca(pedido: PedidoBusca):
+        """Quantas buscas o pedido faria, sem buscar (a interface mostra antes e pede confirmação acima do limite)."""
+        rota = montar_rota(pedido.rota)
+        return {"n": len(busca_avulsa.combinacoes_da_rota(rota)), "limite": LIMITE_SEM_CONFIRMAR, "nome": rota["nome"]}
+
+    @app.get("/api/busca")
+    def busca_atual():
+        return jsonable_encoder(buscas.atual())
+
     @app.get("/api/busca/{id_}")
     def ver_busca(id_: str):
         busca = buscas.obter(id_)

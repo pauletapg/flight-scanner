@@ -25,13 +25,14 @@ def voo_em_dict(voo) -> dict:
 
 
 class Buscas:
-    """Buscas avulsas, uma por vez. `obter(id)` devolve uma cópia do estado: progresso i/n, as linhas de
-    progresso, os resultados (quando termina) e o erro (se der errado)."""
+    """Buscas avulsas, uma por vez. `obter(id)` devolve uma cópia do estado: a rota (`config`), o progresso
+    i/n, as linhas de progresso, os resultados (quando termina) e o erro (se der errado)."""
 
     def __init__(self):
         self._trava = threading.Lock()
         self._buscas: dict[str, dict] = {}
         self._rodando: str | None = None
+        self._ultima: str | None = None
 
     def iniciar(self, rota: dict, geral: dict, n: int, reservas: int = 0, caminho_banco: Path | None = None) -> str:
         with self._trava:
@@ -39,10 +40,10 @@ class Buscas:
                 raise Ocupado("Já há uma busca em andamento; espere ela terminar.")
             id_ = uuid.uuid4().hex[:12]
             self._buscas[id_] = {
-                "id": id_, "rota": rota["nome"], "estado": "rodando", "i": 0, "n": n, "linhas": [],
-                "resultados": [], "erro": None, "inicio": _agora(), "fim": None,
+                "id": id_, "rota": rota["nome"], "config": rota, "estado": "rodando", "i": 0, "n": n,
+                "linhas": [], "resultados": [], "erro": None, "inicio": _agora(), "fim": None,
             }
-            self._rodando = id_
+            self._rodando = self._ultima = id_
         extras = {"caminho_banco": caminho_banco} if caminho_banco else {}
         threading.Thread(target=self._rodar, args=(id_, rota, geral, reservas, extras), daemon=True).start()
         return id_
@@ -64,6 +65,10 @@ class Buscas:
         with self._trava:
             busca.update(resultado, fim=_agora())
             self._rodando = None
+
+    def atual(self) -> dict | None:
+        """A busca em andamento ou, se nenhuma estiver rodando, a última (para a página retomar)."""
+        return self._ultima and self.obter(self._ultima)
 
     def obter(self, id_: str) -> dict | None:
         with self._trava:
