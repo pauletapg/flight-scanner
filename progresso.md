@@ -61,3 +61,84 @@
 
 **Pendências**
 - Etapa 2 precisa da aprovação para instalar `fastapi`, `uvicorn` e `httpx` no `.venv`.
+
+## Etapa 2: Servidor FastAPI e API · 2026-10-05 · concluída
+**Modelo:** Opus 5.5 (a skill fixa Sonnet, mas a sessão mostrou Opus 5.5) · **Esforço:** medium
+
+**O que foi feito**
+- Instalados no `.venv` (com aprovação): `fastapi==0.142.2`, `uvicorn==0.54.0`, `httpx==0.28.1`, fixados no
+  `requirements.txt`.
+- `scanner/web/app.py`: `criar_app(caminho_config, caminho_banco, caminho_log, consultar_tarefas, comando_scanner,
+  arquivo_env)` e `app = criar_app(arquivo_env=PASTA / ".env")` (o `.env` só é lido no lifespan, então importar o
+  módulo nos testes não carrega as chaves reais). Endpoints: `GET/POST/PUT /api/rotas`, `POST /api/rotas/acao`,
+  `POST /api/busca`, `GET /api/busca/{id}`, `GET /api/historico?rota=`, `GET /api/alertas?rota=&limite=`,
+  `GET /api/relatorio`, `GET /api/status`, `POST/GET /api/executar`, `POST /api/notificacao-teste`; estáticos em `/`.
+  Modelo `RotaEntrada` (pydantic) + `montar_rota`, que grava no config na mesma ordem de campos da CLI.
+- `scanner/web/tarefas.py`: `Buscas` (thread, uma por vez, estado com i/n, linhas, resultados e erro) e
+  `Execucoes` (subprocesso `python -m scanner.main [--dry-run]`, stdout+stderr juntos, `PYTHONIOENCODING=utf-8`,
+  `CREATE_NO_WINDOW`, limite de 30 min). Ambos lançam `Ocupado` → 409.
+- `scanner/web/status.py`: `ler_fim` (só os últimos 200 KB do log), `entradas` (junta traceback e texto do alerta à
+  linha anterior), `ultima_execucao`, `erros_recentes` (WARNING/ERROR/CRITICAL, mais novo primeiro),
+  `ler_schtasks`/`consultar_tarefas` (FlightScanner e VooScanner) e `obter`.
+- `scanner/relatorio.py`: `dados(con)` devolve por rota `buscas`, `combinacoes`, `por_hora` e `por_dia`; `gerar()`
+  passou a formatar a partir dele.
+- `scanner/notificar.py`: `enviar_teste()` extraída do `__main__`, usada pela CLI e pela API.
+- `scanner/web/static/index.html` provisório.
+- Testes novos: `tests/test_web.py` (30), `tests/test_web_status.py` (10), `tests/test_relatorio.py` (3).
+
+**Skills usadas**
+- superpowers:test-driven-development: testes do relatório, do status e da API escritos antes; vistos falhando
+  (AttributeError de `relatorio.dados`, ImportError de `scanner.web.status` e de `scanner.web.app`).
+  O teste do texto do relatório é de caracterização (passou antes do refatoramento, de propósito).
+- headroom:peek: não usada. O `logs\scanner.log` real tem 63 KB; `tail` e `grep` bastaram para ver o formato.
+
+**Desvios do plano**
+- `POST /api/rotas/acao` com `retomar` responde 409 (com `ativas`) se já houver 3 ativas; a CLI continua só
+  avisando. Decisão que a Etapa 1 deixou para cá.
+- `POST /api/busca` recusa com 422 acima de `LIMITE_SEM_CONFIRMAR` (30) sem `forcar: true`, e sem datas no futuro.
+- `GET /api/historico` sem `rota` devolve só a lista de rotas do banco (`pontos` vazio); com `rota`, um ponto por
+  busca e combinação de datas, com `menor_preco` (todos os voos) e `menor_nos_filtros`.
+- `GET /api/executar` (não previsto) devolve a última execução do "Rodar agora"; o `/api/status` também traz em
+  `execucao`.
+- Erros de validação do pydantic viram 422 `{"detail": "Dados inválidos em <campo>: <motivo>"}` em português.
+- Testes de status num arquivo à parte (`test_web_status.py`) e do relatório em `test_relatorio.py`.
+- `pytest.ini` ganhou `filterwarnings` para o aviso do Starlette 1.7 ("use httpx2 em vez de httpx"): trocar
+  exigiria outro pacote não aprovado, e o httpx funciona.
+
+**Problemas e correções**
+- O heredoc do Git Bash transformou `\n` em quebra de linha de verdade duas vezes (no script que reescreveu
+  `relatorio.py`, o que deu SyntaxError, e no de `notificar.py`, onde o assert não achou o trecho). É o mesmo
+  problema da Etapa 1; corrigi com a ferramenta de edição. Para a próxima vez: nada de `\n` em heredoc, usar o Edit.
+- O script de conferência no scratchpad deu `ModuleNotFoundError: scanner` → faltava `PYTHONPATH=.` fora do pytest.
+- `uvicorn --port 8765` falhou (WinError 10048): a porta está ocupada por outro programa do usuário,
+  `python ferramentas\servidor.py` (PID 8068, aberto às 19:42, de outro projeto). Não mexi nele; o curl na 8765
+  devolvia a página 404 do `http.server`, o que primeiro pareceu erro da API. Verifiquei na porta 8766.
+- `curl --data-urlencode "rota=Rio → Recife ..."` no Git Bash devolveu `pontos` vazio; com Python (`urllib`) vieram os
+  80 pontos. Problema de codificação do argumento no Git Bash, não da API.
+
+**Observações**
+- O schtasks (Windows em português) sai em cp850 e com uma linha por gatilho; a próxima execução é a menor entre as
+  linhas. As datas vêm em dd/mm/aaaa e a API devolve ISO.
+- Os avisos antigos do log ("WhatsApp não configurado ... Alerta não enviado:") trazem a mensagem inteira do alerta
+  (vários KB cada); a tela de status (Etapa 3) deve mostrar só a primeira linha e expandir sob demanda.
+- Se o log acabou de girar (`RotatingFileHandler`, 1 MB), o último "Início" pode estar no `scanner.log.1`; hoje
+  isso aparece como "sem execução" até a próxima rodada.
+- O "Rodar agora" real não foi disparado: mesmo em `--dry-run` ele faz 10 buscas de verdade no Google. Os testes
+  usam um comando falso (`python -c ...`).
+- A interface pode receber `datas` como `["2027-02-01", ["2027-03-01", "2027-03-10"]]` (data avulsa ou par
+  ida/volta), como a CLI.
+
+**Verificação**
+- `.\.venv\Scripts\python.exe -m pytest`: 99 passaram, 0 falharam (56 antigos + 43 novos), sem avisos.
+- Pronto quando: o uvicorn sobe (na 8766, porque a 8765 está ocupada por outro programa) e `GET /api/rotas` e
+  `/api/status` devolvem JSON com os dados reais: a rota "Rio → Recife (2 adultos + 1 criança)", a última execução
+  das 19:45–19:46, 15 consultas da SerpApi no mês, a tarefa `VooScanner` com a próxima execução. Também conferidos
+  com dados reais `/api/historico` (80 pontos por rota), `/api/alertas`, `/api/relatorio` e `/`.
+- `python -m scanner.relatorio`: saída real idêntica antes e depois do refatoramento (`cmp`).
+- Rota criada pela API numa cópia do `config.yaml` sai no mesmo formato YAML da CLI; o `config.yaml` real ficou
+  igual (sha256 `a704540…` no início e no fim).
+
+**Pendências**
+- A porta 8765 está ocupada neste PC pelo `ferramentas\servidor.py` de outro projeto. A Etapa 6 (atalho) precisa
+  decidir: outra porta fixa ou detectar a porta livre.
+- Etapa 3: mostrar os erros do log resumidos (primeira linha), porque alguns avisos têm vários KB.

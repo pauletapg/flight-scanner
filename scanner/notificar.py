@@ -42,13 +42,17 @@ def _enviar_ntfy(texto: str, botoes: list[tuple[str, str]]) -> None:
     resposta.raise_for_status()
 
 
+def enviar_teste() -> None:
+    enviar(
+        "✈️ Flight Scanner: teste\nSe esta notificação chegou, os alertas vão funcionar.",
+        [("Abrir o Google Flights", "https://www.google.com/travel/flights?hl=pt-BR")],
+    )
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Envia uma notificação de teste.")
     parser.add_argument("--teste", action="store_true", required=True)
     parser.parse_args()
     load_dotenv()
-    enviar(
-        "✈️ Flight Scanner: teste\nSe esta notificação chegou, os alertas vão funcionar.",
-        [("Abrir o Google Flights", "https://www.google.com/travel/flights?hl=pt-BR")],
-    )
+    enviar_teste()
     print("Notificação enviada. Confira o celular.")
