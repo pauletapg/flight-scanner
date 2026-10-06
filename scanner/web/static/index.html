@@ -3,12 +3,167 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <title>Flight Scanner</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231F5C99'/%3E%3Crect x='6' y='9' width='20' height='3' fill='%23fff'/%3E%3Crect x='6' y='15' width='14' height='3' fill='%23fff'/%3E%3Crect x='6' y='21' width='17' height='3' fill='%23fff'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="estilo.css">
 </head>
 <body>
-  <!-- Página provisória da Etapa 2: só prova que o servidor entrega os arquivos estáticos. -->
-  <h1>Flight Scanner</h1>
-  <p>Servidor no ar. A interface chega nas próximas etapas; por enquanto, veja <a href="/api/status">/api/status</a>
-     e <a href="/api/rotas">/api/rotas</a>.</p>
+  <header class="topo">
+    <div class="marca">
+      <span class="marca-nome">Flight Scanner</span>
+      <span class="marca-proxima" id="proxima" hidden></span>
+    </div>
+    <nav class="abas" aria-label="Telas">
+      <a href="#buscar" data-tela="buscar">Buscar agora</a>
+      <a href="#rotas" data-tela="rotas">Monitoradas</a>
+      <a href="#historico" data-tela="historico">Histórico</a>
+      <a href="#status" data-tela="status">Status</a>
+    </nav>
+  </header>
+
+  <main id="conteudo">
+    <!-- Buscar agora: Etapa 4 -->
+    <section class="tela" id="tela-buscar" hidden>
+      <h1>Buscar agora</h1>
+      <p class="em-breve">Em breve: busca avulsa com progresso e resultados. Por enquanto, use
+        <code>python -m scanner.buscar</code> no terminal.</p>
+    </section>
+
+    <!-- Buscas monitoradas -->
+    <section class="tela" id="tela-rotas" hidden>
+      <div class="cabecalho-tela">
+        <h1>Buscas monitoradas</h1>
+        <div class="vagas" id="vagas" aria-live="polite"></div>
+      </div>
+      <p class="explica">A tarefa agendada busca estas rotas 12 vezes por dia e avisa no celular quando o preço cai.</p>
+      <div id="lista-rotas" class="fitas"><p class="secundario">Carregando…</p></div>
+    </section>
+
+    <!-- Histórico e gráficos: Etapa 5 -->
+    <section class="tela" id="tela-historico" hidden>
+      <h1>Histórico e gráficos</h1>
+      <p class="em-breve">Em breve: preço ao longo do tempo, alertas enviados e relatório de horários. Por enquanto,
+        use <code>python -m scanner.relatorio</code> no terminal.</p>
+    </section>
+
+    <!-- Status e ações -->
+    <section class="tela" id="tela-status" hidden>
+      <div class="cabecalho-tela">
+        <h1>Status e ações</h1>
+        <button type="button" class="botao discreto" id="atualizar-status">Atualizar</button>
+      </div>
+      <div class="painel-status">
+        <article class="quadro" id="quadro-execucao"><h2>Última execução</h2><div class="corpo"><p class="secundario">Carregando…</p></div></article>
+        <article class="quadro" id="quadro-tarefa"><h2>Tarefa agendada</h2><div class="corpo"><p class="secundario">Carregando…</p></div></article>
+        <article class="quadro" id="quadro-serpapi"><h2>Cota da SerpApi</h2><div class="corpo"><p class="secundario">Carregando…</p></div></article>
+      </div>
+
+      <article class="quadro acoes">
+        <h2>Ações</h2>
+        <div class="botoes">
+          <button type="button" class="botao" id="rodar-teste">Rodar sem enviar (teste)</button>
+          <button type="button" class="botao primario" id="rodar-agora">Rodar agora</button>
+          <button type="button" class="botao" id="testar-notificacao">Testar notificação</button>
+        </div>
+        <p class="explica">Cada execução faz até 10 buscas no Google Flights e leva cerca de um minuto.
+          "Rodar agora" envia o alerta no celular se encontrar voo bom; o teste só mostra o alerta aqui.</p>
+        <div id="saida-execucao"></div>
+      </article>
+
+      <article class="quadro">
+        <h2>Avisos e erros recentes</h2>
+        <ol class="erros" id="lista-erros"><li class="secundario">Carregando…</li></ol>
+      </article>
+    </section>
+  </main>
+
+  <dialog id="dialogo-editar" class="dialogo largo" aria-labelledby="titulo-editar">
+    <form method="dialog" id="form-rota" novalidate>
+      <h2 id="titulo-editar">Editar rota</h2>
+      <div class="campos">
+        <label class="inteiro">Nome
+          <input name="nome" required maxlength="120">
+        </label>
+        <label>Origem (IATA)
+          <input name="origem" required minlength="3" maxlength="3" autocapitalize="characters" class="iata">
+        </label>
+        <label>Destino (IATA)
+          <input name="destino" required minlength="3" maxlength="3" autocapitalize="characters" class="iata">
+        </label>
+
+        <fieldset class="inteiro">
+          <legend>Datas de ida</legend>
+          <div class="linha">
+            <label>De <input type="date" name="ida_inicio"></label>
+            <label>Até <input type="date" name="ida_fim"></label>
+            <label>A cada (dias) <input type="number" name="passo_dias" min="1" value="1"></label>
+          </div>
+          <label>Datas avulsas, uma por linha
+            <textarea name="datas" rows="3" placeholder="ex.: 20/12/2026&#10;ex.: 22/12/2026 a 05/01/2027"></textarea>
+          </label>
+          <p class="dica">Uma data sozinha é só a ida; "ida a volta" fixa as duas datas.</p>
+        </fieldset>
+
+        <label class="inteiro">Duração da viagem (dias)
+          <input name="duracoes_dias" placeholder="ex.: 6, 7, 8" inputmode="numeric">
+          <span class="dica">Separe por vírgula. Em branco: só ida.</span>
+        </label>
+
+        <fieldset class="inteiro">
+          <legend>Passageiros</legend>
+          <div class="linha">
+            <label>Adultos <input type="number" name="adultos" min="1" value="1"></label>
+            <label>Crianças (2 a 11) <input type="number" name="criancas" min="0" value="0"></label>
+            <label>Bebês de colo <input type="number" name="bebes_colo" min="0" value="0"></label>
+          </div>
+          <p class="aviso" id="aviso-passageiros" hidden>Você mudou os passageiros: troque também o nome, para o
+            histórico não misturar preços de quantidades diferentes de pessoas.</p>
+        </fieldset>
+
+        <label>Classe
+          <select name="classe">
+            <option value="economy">Econômica</option>
+            <option value="premium-economy">Econômica premium</option>
+            <option value="business">Executiva</option>
+            <option value="first">Primeira classe</option>
+          </select>
+        </label>
+        <label>Alerta quando o preço cair (%)
+          <input type="number" name="queda_percentual" min="1" max="99" step="any">
+        </label>
+
+        <fieldset class="inteiro">
+          <legend>Filtros</legend>
+          <div class="linha">
+            <label>Preço máximo (R$, total) <input type="number" name="preco_max" min="1"></label>
+            <label>Escalas no máximo <input type="number" name="escalas_max" min="0"></label>
+            <label>Duração máx. do voo (h) <input type="number" name="duracao_max_horas" min="0.5" step="0.5"></label>
+          </div>
+          <p class="dica">Em branco: sem limite.</p>
+        </fieldset>
+      </div>
+      <p class="erro-form" id="erro-editar" role="alert" hidden></p>
+      <div class="botoes fim">
+        <button type="button" class="botao discreto" value="cancelar" data-fechar>Cancelar</button>
+        <button type="submit" class="botao primario" value="salvar">Salvar alterações</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dialogo-confirmar" class="dialogo" aria-labelledby="titulo-confirmar">
+    <form method="dialog">
+      <h2 id="titulo-confirmar"></h2>
+      <p id="texto-confirmar"></p>
+      <div class="botoes fim">
+        <button type="submit" class="botao discreto" value="nao">Cancelar</button>
+        <button type="submit" class="botao primario" value="sim" id="botao-confirmar"></button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="avisos" id="avisos" aria-live="polite"></div>
+
+  <script src="app.js"></script>
 </body>
 </html>

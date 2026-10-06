@@ -142,3 +142,80 @@
 - A porta 8765 está ocupada neste PC pelo `ferramentas\servidor.py` de outro projeto. A Etapa 6 (atalho) precisa
   decidir: outra porta fixa ou detectar a porta livre.
 - Etapa 3: mostrar os erros do log resumidos (primeira linha), porque alguns avisos têm vários KB.
+
+## Etapa 3: Base visual e telas "Buscas monitoradas" e "Status e ações" · 2026-10-05 · concluída
+**Modelo:** Opus 5.5 (a skill fixa Sonnet, mas a sessão mostrou Opus 5.5) · **Esforço:** medium
+
+**O que foi feito**
+- Direção visual registrada no topo de `scanner/web/static/estilo.css`: mesa de controle de tráfego aéreo; cada rota
+  é uma "fita de progresso de voo" (campos separados por réguas, faixa lateral azul = monitorando, âmbar listrado =
+  pausada). Bahnschrift condensada (DIN do Windows) para IATA, títulos e rótulos; Segoe UI no texto; Cascadia Mono
+  nas saídas. Tokens de cor/espaço com tema claro e escuro (`prefers-color-scheme`). Sem CDN.
+- `index.html`: topo com a próxima busca agendada, abas `#buscar`, `#rotas`, `#historico`, `#status` ("Buscar
+  agora" e "Histórico" mostram "em breve"), diálogo de edição de rota e diálogo de confirmação.
+- `app.js` (JavaScript puro): `h()` cria elementos sem `innerHTML`; `api()` lança `Error` com o `detail`.
+  Buscas monitoradas: fitas, indicador "N de 3 vagas em uso", pausar/retomar, remover com confirmação, editar
+  (formulário com intervalo de ida, datas avulsas em dd/mm/aaaa ou "ida a volta", durações, passageiros, classe,
+  filtros e queda %) e aviso quando os passageiros mudam e o nome não. `lerFormularioRota` fica para a Etapa 4.
+  Status: última execução, tarefa agendada (próxima, situação, último resultado), cota SerpApi com medidor,
+  "Rodar sem enviar (teste)", "Rodar agora" (com confirmação), "Testar notificação", saída da execução e erros
+  recentes resumidos na primeira linha (o resto num `<details>`).
+- Layout de uma coluna no celular (fitas em 2 colunas de campos, abas compactas).
+- `tests/test_web.py`: a página tem as 4 abas e serve `estilo.css` e `app.js` com o tipo certo.
+- `tests/conftest.py`: fixture automática que apaga `NTFY_TOPIC`, `NTFY_SERVER`, `CALLMEBOT_*` e `SERPAPI_KEY`.
+- `.claude/launch.json`: configuração `interface` (uvicorn na 8766, com `--reload`). `CLAUDE.md` atualizado.
+
+**Skills usadas**
+- anthropic-skills:frontend-design: direção visual (fita de progresso de voo, DIN, paleta de console) antes do código;
+  revisada contra os visuais genéricos (creme+terracota, preto+verde ácido, jornal).
+- run: não carregada como skill; o servidor subiu pelo `preview_start` com o `.claude/launch.json` (mesmo efeito).
+- anthropic-skills:built-in-browser: telas testadas no navegador embutido (claro, escuro, 375 px), console sem erros.
+
+**Desvios do plano**
+- Testado na porta 8766, não na 8765 (ocupada pelo `ferramentas\servidor.py` de outro projeto, como na Etapa 2).
+- Tela inicial sem `#hash` é "Buscas monitoradas", enquanto "Buscar agora" não existe (constante `TELA_INICIAL`
+  no `app.js`; a Etapa 4 pode trocar).
+- Os testes de editar e remover pela interface foram feitos num segundo servidor apontando para uma cópia do
+  `config.yaml` e do banco (script no scratchpad), para não mexer na rota real. Pausar/retomar foi feito no real.
+- Correção fora do escopo, em `tests/conftest.py` (ver Problemas): proteção das chaves do `.env` nos testes.
+
+**Problemas e correções**
+- **Duas notificações de teste reais foram enviadas ao celular.** Testei "Testar notificação" no servidor da cópia
+  achando que ele não teria as chaves (o `criar_app` sem `arquivo_env` não lê o `.env`). Causa: o `fast_flights`
+  chama `load_dotenv()` quando é importado, então qualquer processo que importe `scanner.pesquisa` (inclusive os
+  testes) fica com o `.env` real no ambiente. O diário da Etapa 2 dizia que importar o app não carregava as
+  chaves; isso estava errado. Correção para os testes: fixture `sem_chaves_reais` no `conftest.py`.
+- O `<dialog>` de confirmação não removia: com o painel do navegador escondido, o evento `close` do diálogo não
+  dispara (reproduzido isolado). `confirmar()` passou a responder pelo `submit` (síncrono, com `submitter`) e
+  pelo `cancel` (Esc), sem depender do `close`.
+- Pausei a rota real às 21:06 achando que a próxima execução era às 23:00, mas a das 21:05 estava rodando. Ela
+  já tinha lido o config no início (fez 10 de 12 combinações) e a rota foi retomada segundos depois; o
+  `config.yaml` voltou idêntico (sha256 `a704540…`). Para a próxima vez: olhar "Última execução" antes de pausar.
+- Um `sed` para trocar `\r` na saída inseriu um CR literal na regex do `app.js` (sintaxe quebrada); corrigido
+  com Python e conferido com `node --check`. Mesmo problema de escape no shell das Etapas 1 e 2.
+- Placeholders do formulário pareciam valores preenchidos; ganharam "ex.:" e cor mais clara. A data na lista de
+  erros quebrava em duas linhas (coluna fixa); passou a `max-content`. A aba "Status" ficava cortada a 375 px.
+- Quadros do status ficavam vazios por ~2 s (o `schtasks` é lento); ganharam "Carregando…".
+
+**Observações**
+- Com o painel do navegador embutido escondido, cliques por coordenada e capturas falham e os timers atrasam;
+  `element.click()` por JavaScript funciona para testar.
+- O "Rodar sem enviar" é uma execução de verdade: faz as buscas, grava preços e avança o rodízio (só não envia).
+- A saída do "Rodar agora" só chega no fim (o subprocesso não é lido aos poucos); a tela mostra "rodando desde…".
+- `pydantic` recusa datas impossíveis (31/02) com 422 "Dados inválidos em rota.datas.0: valor inválido".
+
+**Verificação**
+- `.\.venv\Scripts\python.exe -m pytest`: 100 passaram, 0 falharam.
+- Pausar e retomar no navegador embutido (porta 8766) mudou o `config.yaml`: `buscar --listar` mostrou
+  `[PAUSADA]` e depois `[ativa]`; o arquivo voltou idêntico byte a byte. ok.
+- Status mostra a cota real (15 de 240, 0 hoje) e a tarefa `VooScanner` (habilitada, próxima às 23:00). ok.
+- "Rodar sem enviar" real: rodou de 21:09 a 21:10, saída com as 10 buscas e "Fim: nenhum alerta" na página. ok.
+- Console do navegador sem erros (8766 e cópia). ok.
+- Na cópia: editar (passageiros, nome, par ida/volta) gravou no mesmo formato da CLI com os comentários
+  preservados; remover pede confirmação, Cancelar não remove; retomar com 3 ativas mostra a recusa. ok.
+
+**Pendências**
+- O `fast_flights` carrega o `.env` ao ser importado (afeta qualquer processo do projeto). Os testes estão
+  protegidos; a Etapa 8 pode avaliar se vale mais alguma proteção.
+- Etapa 4: reaproveitar `lerFormularioRota`/`preencherFormularioRota` e trocar `TELA_INICIAL` para `buscar`.
+- A porta 8765 continua ocupada pelo outro programa (decisão da Etapa 6).

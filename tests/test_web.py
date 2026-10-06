@@ -369,3 +369,13 @@ def test_notificacao_com_falha_no_envio(cliente, monkeypatch):
 def test_pagina_inicial(cliente):
     r = cliente.get("/")
     assert r.status_code == 200 and "Flight Scanner" in r.text
+    for tela in ("#buscar", "#rotas", "#historico", "#status"):
+        assert f'href="{tela}"' in r.text
+
+
+def test_pagina_carrega_estilo_e_script(cliente):
+    pagina = cliente.get("/").text
+    for arquivo, tipo in (("estilo.css", "text/css"), ("app.js", "javascript")):
+        assert f'"{arquivo}"' in pagina
+        r = cliente.get(f"/{arquivo}")
+        assert r.status_code == 200 and tipo in r.headers["content-type"]
