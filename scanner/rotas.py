@@ -67,16 +67,20 @@ def _gravar(caminho: Path, texto: str, crlf: bool) -> None:
 
 
 def _blocos(texto: str) -> tuple[str, list[str]]:
-    """Separa o config.yaml em (cabeçalho até 'rotas:', um texto por rota), preservando os comentários."""
+    """Separa o config.yaml em (cabeçalho até 'rotas:' e os comentários antes da primeira rota, um texto por rota),
+    preservando os comentários. As linhas em branco do fim do cabeçalho voltam no _montar."""
     linhas = texto.splitlines(keepends=True)
     inicio = next(i for i, l in enumerate(linhas) if l.startswith("rotas:")) + 1
+    cabecalho = linhas[:inicio]
     blocos: list[str] = []
     for linha in linhas[inicio:]:
         if linha.startswith("  - "):
             blocos.append(linha)
         elif blocos:
             blocos[-1] += linha
-    return "".join(linhas[:inicio]), blocos
+        else:
+            cabecalho.append(linha)
+    return "".join(cabecalho).rstrip("\n") + "\n", blocos
 
 
 def _montar(cabecalho: str, blocos: list[str]) -> str:
@@ -95,8 +99,28 @@ def _com_pausa(bloco: str, pausada: bool) -> str:
     return "".join(linhas)
 
 
-def _ativas(rotas: list[dict]) -> list[dict]:
+def ativas(rotas: list[dict]) -> list[dict]:
     return [r for r in rotas if not r.get("pausada")]
+
+
+def montar_rota(origem: str, destino: str, nome: str | None = None, ida_entre=None, passo_dias: int = 1,
+                datas=None, duracoes_dias=None, adultos: int = 1, criancas: int = 0, bebes_colo: int = 0,
+                classe: str = "economy", filtros: dict | None = None, queda_percentual: float = 10) -> dict:
+    """A rota como fica no config.yaml (mesma ordem de campos), a partir dos dados da CLI ou da interface.
+    Sem nome, vira "ORIGEM → DESTINO"; filtros com valor None ficam de fora."""
+    origem, destino = origem.strip().upper(), destino.strip().upper()
+    rota = {"nome": (nome or "").strip() or f"{origem} → {destino}", "origem": origem, "destino": destino}
+    if ida_entre:
+        rota["ida_entre"] = list(ida_entre)
+        rota["passo_dias"] = passo_dias
+    if datas:
+        rota["datas"] = [list(d) if isinstance(d, (list, tuple)) else d for d in datas]
+    if duracoes_dias:
+        rota["duracoes_dias"] = list(duracoes_dias)
+    rota |= {"adultos": adultos, "criancas": criancas, "bebes_colo": bebes_colo, "classe": classe}
+    rota["filtros"] = {k: v for k, v in (filtros or {}).items() if v is not None}
+    rota["alerta"] = {"queda_percentual": queda_percentual}
+    return rota
 
 
 def _indice(rotas: list[dict], nome: str) -> int:
@@ -119,8 +143,8 @@ def adicionar(rota: dict, substituir: str | None = None, caminho: Path | None = 
     if substituir is not None:
         i = _indice(rotas, substituir)
         del blocos[i], rotas[i]
-    if not rota.get("pausada") and len(_ativas(rotas)) >= MAX_ROTAS:
-        raise VagasEsgotadas([r["nome"] for r in _ativas(rotas)])
+    if not rota.get("pausada") and len(ativas(rotas)) >= MAX_ROTAS:
+        raise VagasEsgotadas([r["nome"] for r in ativas(rotas)])
     blocos.append(_bloco(rota))
     _gravar(caminho, _montar(cabecalho, blocos), crlf)
 
@@ -153,7 +177,7 @@ def pausar(nome: str, caminho: Path | None = None) -> None:
 
 def retomar(nome: str, caminho: Path | None = None) -> int:
     """Reativa a rota e devolve quantas ficaram ativas (acima de MAX_ROTAS o scanner não roda)."""
-    return len(_ativas(_mudar_pausa(nome, False, caminho)))
+    return len(ativas(_mudar_pausa(nome, False, caminho)))
 
 
 def remover(nome: str, caminho: Path | None = None) -> None:

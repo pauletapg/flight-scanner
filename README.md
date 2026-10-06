@@ -67,7 +67,8 @@ seguinte continua de onde a anterior parou. Assim o intervalo inteiro é coberto
 ## 3. Rodar
 
 ```powershell
-# Uma execução, mostrando o alerta no terminal em vez de enviar
+# Uma execução de teste: mostra o alerta no terminal em vez de enviar e não grava os preços
+# no histórico (faz as buscas de verdade e conta o gasto da SerpApi)
 .\.venv\Scripts\python.exe -m scanner.main --dry-run
 
 # Só uma rota
@@ -120,7 +121,7 @@ Logs do servidor: `logs\interface.log`. Se o `Flight Scanner.cmd` avisar que a p
 uso por outro programa, feche-o e tente de novo. Para subir o servidor à mão, em outra porta:
 
 ```powershell
-.\.venv\Scripts\python.exe -m uvicorn scanner.web.app:app --port 8766
+.\.venv\Scripts\python.exe -m uvicorn scanner.web.app:app --port 8767
 ```
 
 ### Acesso pelo celular (opcional)

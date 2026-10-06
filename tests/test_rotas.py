@@ -141,6 +141,36 @@ def test_editar_para_nome_de_outra_rota(config):
         rotas.editar("Z", nova("Z"), caminho=config)
 
 
+def test_comentario_logo_abaixo_de_rotas_sobrevive(tmp_path):
+    caminho = tmp_path / "config.yaml"
+    caminho.write_text(CONFIG.replace("rotas:\n\n", "rotas:\n  # rotas de dezembro\n\n"), encoding="utf-8")
+    original = caminho.read_text(encoding="utf-8")
+    rotas.pausar("A", caminho=caminho)
+    rotas.retomar("A", caminho=caminho)
+    assert caminho.read_text(encoding="utf-8") == original
+    rotas.remover("A", caminho=caminho)
+    assert "  # rotas de dezembro\n\n  - nome: B" in caminho.read_text(encoding="utf-8")
+
+
+def test_ativas(config):
+    assert [r["nome"] for r in rotas.ativas(rotas.listar(config))] == ["A", "B"]
+
+
+def test_montar_rota_no_formato_do_config():
+    rota = rotas.montar_rota(" sdu ", "cgh", nome="  ", ida_entre=["2026-12-20", "2026-12-23"], passo_dias=2,
+                             duracoes_dias=[7], adultos=2, filtros={"preco_max": 900, "escalas_max": None},
+                             queda_percentual=15)
+    assert rota == {
+        "nome": "SDU → CGH", "origem": "SDU", "destino": "CGH", "ida_entre": ["2026-12-20", "2026-12-23"],
+        "passo_dias": 2, "duracoes_dias": [7], "adultos": 2, "criancas": 0, "bebes_colo": 0, "classe": "economy",
+        "filtros": {"preco_max": 900}, "alerta": {"queda_percentual": 15},
+    }
+    assert list(rota) == list(rotas.montar_rota("SDU", "CGH", ida_entre=["x", "y"], duracoes_dias=[7]))  # mesma ordem
+    so_datas = rotas.montar_rota("SDU", "CGH", nome="Natal", datas=["2026-12-20", ("2026-12-21", "2026-12-28")])
+    assert so_datas["nome"] == "Natal" and so_datas["datas"] == ["2026-12-20", ["2026-12-21", "2026-12-28"]]
+    assert "ida_entre" not in so_datas and "duracoes_dias" not in so_datas
+
+
 def test_gravacao_atomica_nao_deixa_temporario(config):
     rotas.adicionar(nova(), caminho=config)
     assert [p.name for p in config.parent.iterdir()] == ["config.yaml"]

@@ -6,7 +6,8 @@ Detalhes de uso no README.md. Textos, comentários e documentação em portuguê
 ## Comandos
 
 - Testes: `.\.venv\Scripts\python.exe -m pytest`
-- Execução sem enviar alerta: `.\.venv\Scripts\python.exe -m scanner.main --dry-run`
+- Execução sem enviar alerta: `.\.venv\Scripts\python.exe -m scanner.main --dry-run` (faz as buscas de verdade, mas
+  não grava preços no histórico nem avança o rodízio; só a cota da SerpApi e o cache das reservas ficam gravados)
 - Busca avulsa / rotas salvas: `.\.venv\Scripts\python.exe -m scanner.buscar --listar`
 - Interface (servidor): `.\.venv\Scripts\python.exe -m uvicorn scanner.web.app:app --port 8765`
   (neste PC a 8765 pode estar ocupada por outro projeto, o `ferramentas\servidor.py`; use outra porta para testar)
@@ -24,11 +25,13 @@ Detalhes de uso no README.md. Textos, comentários e documentação em portuguê
 
 - Rotas monitoradas ficam no `config.yaml`; máximo de 3 ativas (`MAX_ROTAS` em `scanner/main.py`).
 - Toda edição de rotas passa por `scanner/rotas.py` (preserva comentários, grava de forma atômica, erros como
-  exceções `ErroRota`); a busca avulsa é `scanner/busca_avulsa.buscar` com callback de progresso.
+  exceções `ErroRota`), assim como `rotas.montar_rota` (a rota no formato do config, para CLI e API) e
+  `rotas.ativas`; a busca avulsa é `scanner/busca_avulsa.buscar` com callback de progresso.
   A CLI (`scanner/buscar.py`) só cuida de argparse, print e input.
 - A interface web fica em `scanner/web/`: `app.py` só traduz para HTTP (`criar_app(...)` recebe caminhos de
   config, banco e log, a consulta da tarefa agendada e o comando do scanner, para os testes); `tarefas.py` roda a
-  busca avulsa e o "Rodar agora" em segundo plano (um de cada por vez, 409 no segundo); `status.py` lê o log,
+  busca avulsa e o "Rodar agora" em segundo plano (um de cada por vez, 409 no segundo; o "Rodar agora" também dá
+  409 se o log mostra um "Início" sem "Fim" de menos de 20 min, `status.execucao_em_andamento`); `status.py` lê o log,
   a cota da SerpApi e o `schtasks` (colunas pela posição, porque os títulos mudam com o idioma).
 - A página fica em `scanner/web/static/` (sem build, sem CDN): `index.html` (as 4 telas por `#hash`), `estilo.css`
   (direção visual e tokens de cor/tipo no topo; claro e escuro) e `app.js` (JavaScript puro; elementos criados com
@@ -36,7 +39,7 @@ Detalhes de uso no README.md. Textos, comentários e documentação em portuguê
   `<template id="campos-rota">`, copiado para a edição e para "Buscar agora" no lugar de `[data-campos-rota]`;
   `lerFormularioRota`/`preencherFormularioRota` leem pelos nomes e ignoram os que o formulário não tem.
   Diálogos respondem por `esperarResposta(dialogo, aoConfirmar)`. Para ver no navegador embutido: configuração
-  `interface` do `.claude/launch.json` (porta 8766, com `--reload`).
+  `interface` do `.claude/launch.json` (porta 8767, com `--reload`; a 8766 pode estar ocupada por outro projeto).
 - Tela "Histórico" (`#historico`): `GET /api/historico?rota=...` (pontos por busca, alertas, `monitoradas` e `preco_max`
   da rota se ainda estiver no config) e `GET /api/relatorio` (horários). Os gráficos são SVG desenhados pelo próprio
   `app.js`, sem biblioteca: `s(...)` cria elementos SVG como `h(...)` cria HTML; `desenharGraficoPrecos` (linha por

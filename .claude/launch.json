@@ -4,8 +4,8 @@
     {
       "name": "interface",
       "runtimeExecutable": ".venv\\Scripts\\python.exe",
-      "runtimeArgs": ["-m", "uvicorn", "scanner.web.app:app", "--host", "127.0.0.1", "--port", "8766", "--reload", "--reload-dir", "scanner"],
-      "port": 8766
+      "runtimeArgs": ["-m", "uvicorn", "scanner.web.app:app", "--host", "127.0.0.1", "--port", "8767", "--reload", "--reload-dir", "scanner"],
+      "port": 8767
     }
   ]
 }

@@ -6,7 +6,7 @@ import re
 import subprocess
 import sys
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from scanner import historico
@@ -14,6 +14,7 @@ from scanner import historico
 NOMES_TAREFA = ("FlightScanner", "VooScanner")  # a tarefa instalada antes da troca de nome ainda é VooScanner
 _INICIO_ENTRADA = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+ ([A-Z]+) (.*)$")
 _NIVEIS_DE_ERRO = ("WARNING", "ERROR", "CRITICAL")
+JANELA_EXECUCAO = timedelta(minutes=20)
 
 
 def ler_fim(caminho: Path, max_bytes: int = 200_000) -> list[str]:
@@ -55,6 +56,16 @@ def ultima_execucao(registros: list[dict]) -> dict | None:
                 "fim": fim and fim["quando"], "fim_texto": fim and fim["mensagem"],
             }
     return None
+
+
+def execucao_em_andamento(caminho_log: Path, agora: datetime | None = None) -> datetime | None:
+    """Início da execução do scanner que está rodando agora (a agendada, ou outra), pelo log; None se não há.
+    Uma execução leva um ou dois minutos: um "Início" sem "Fim" mais antigo que JANELA_EXECUCAO foi interrompido."""
+    ultima = ultima_execucao(entradas(ler_fim(caminho_log)))
+    if not ultima or ultima["fim"]:
+        return None
+    inicio = datetime.fromisoformat(ultima["inicio"])
+    return inicio if (agora or datetime.now()) - inicio < JANELA_EXECUCAO else None
 
 
 def erros_recentes(registros: list[dict], n: int = 10) -> list[dict]:

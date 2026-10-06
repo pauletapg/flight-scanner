@@ -396,6 +396,37 @@ def test_notificacao_com_falha_no_envio(cliente, monkeypatch):
     assert r.status_code == 502 and "sem internet" in r.json()["detail"]
 
 
+def test_rodar_agora_espera_a_execucao_agendada_em_andamento(cliente, caminhos):
+    comecou = datetime.now() - timedelta(minutes=1)
+    caminhos["log"].write_text(LOG + f"{comecou:%Y-%m-%d %H:%M:%S},000 INFO Início: 10 de 12 combinações de datas\n",
+                               encoding="utf-8")
+    r = cliente.post("/api/executar", json={})
+    assert r.status_code == 409 and f"{comecou:%H:%M}" in r.json()["detail"]
+    assert cliente.get("/api/executar").json() is None  # nada foi iniciado
+
+
+def test_rodar_agora_ignora_execucao_interrompida_ha_tempo(cliente, caminhos):
+    # Um "Início" sem "Fim" de horas atrás é uma execução que caiu no meio, não uma que ainda está rodando.
+    comecou = datetime.now() - timedelta(hours=2)
+    caminhos["log"].write_text(f"{comecou:%Y-%m-%d %H:%M:%S},000 INFO Início: 10 de 12 combinações de datas\n",
+                               encoding="utf-8")
+    assert cliente.post("/api/executar", json={"dry_run": True}).status_code == 202
+    assert esperar(cliente, "/api/executar")["codigo"] == 0
+
+
+def test_erro_inesperado_tambem_vem_em_detail(caminhos, abrir_cliente):
+    caminhos["config"].write_text("rotas: []\n", encoding="utf-8")  # sem a seção geral
+    app = web.criar_app(caminho_config=caminhos["config"], caminho_banco=caminhos["banco"],
+                        caminho_log=caminhos["log"], consultar_tarefas=lambda: [])
+    r = abrir_cliente(app, raise_server_exceptions=False).get("/api/status")
+    assert r.status_code == 500 and r.json()["detail"].startswith("Erro inesperado no servidor")
+
+
+def test_alertas_limite_precisa_ser_positivo(cliente):
+    r = cliente.get("/api/alertas", params={"limite": -1})  # no SQLite, LIMIT -1 é "sem limite"
+    assert r.status_code == 422 and "limite" in r.json()["detail"]
+
+
 def test_desligar_interface_pede_o_encerramento(caminhos, abrir_cliente):
     pedidos = []
     app = web.criar_app(caminho_config=caminhos["config"], caminho_banco=caminhos["banco"],

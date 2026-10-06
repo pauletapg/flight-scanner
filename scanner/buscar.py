@@ -84,23 +84,12 @@ def ler_data_ou_par(texto: str) -> date | list[date]:
 
 
 def montar_rota(args: argparse.Namespace) -> dict:
-    rota = {
-        "nome": args.nome or f"{args.origem} → {args.destino}",
-        "origem": args.origem.upper(),
-        "destino": args.destino.upper(),
-    }
-    if args.ida_entre:
-        rota["ida_entre"] = args.ida_entre
-        rota["passo_dias"] = args.passo
-    if args.datas:
-        rota["datas"] = args.datas
-    if args.duracoes:
-        rota["duracoes_dias"] = args.duracoes
-    rota |= {"adultos": args.adultos, "criancas": args.criancas, "bebes_colo": args.bebes, "classe": args.classe}
-    filtros = {"preco_max": args.preco_max, "escalas_max": args.escalas_max, "duracao_max_horas": args.duracao_max}
-    rota["filtros"] = {k: v for k, v in filtros.items() if v is not None}
-    rota["alerta"] = {"queda_percentual": args.queda}
-    return rota
+    return rotas.montar_rota(
+        args.origem, args.destino, nome=args.nome, ida_entre=args.ida_entre, passo_dias=args.passo, datas=args.datas,
+        duracoes_dias=args.duracoes, adultos=args.adultos, criancas=args.criancas, bebes_colo=args.bebes,
+        classe=args.classe, queda_percentual=args.queda,
+        filtros={"preco_max": args.preco_max, "escalas_max": args.escalas_max, "duracao_max_horas": args.duracao_max},
+    )
 
 
 def _escolher(perguntas: str, nomes: list[str]) -> int | None:
@@ -141,7 +130,7 @@ def gerenciar(acao: str, nome: str | None) -> None:
             estado = "PAUSADA" if r.get("pausada") else "ativa"
             print(f"[{estado}] {r['nome']}: {r['origem']} → {r['destino']}, "
                   f"{r.get('adultos', 1)} adulto(s), {r.get('criancas', 0)} criança(s), teto {r.get('filtros', {}).get('preco_max', '-')}")
-        print(f"\n{len([r for r in salvas if not r.get('pausada')])} de {MAX_ROTAS} vagas ativas usadas.")
+        print(f"\n{len(rotas.ativas(salvas))} de {MAX_ROTAS} vagas ativas usadas.")
         return
     try:
         ativas = {"remover": rotas.remover, "pausar": rotas.pausar, "retomar": rotas.retomar}[acao](nome)

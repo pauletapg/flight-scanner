@@ -7,6 +7,7 @@ import os
 import random
 import time
 from collections.abc import Callable
+from contextlib import closing
 from datetime import date, datetime
 from pathlib import Path
 
@@ -34,20 +35,20 @@ def consultar_reservas(rota: dict, voos: list[Voo], moeda: str, progresso: Progr
     if not os.getenv("SERPAPI_KEY"):
         progresso(None, None, "--reservas precisa da SERPAPI_KEY no arquivo .env.")
         return
-    con = historico.abrir(caminho_banco)
     progresso(None, None, f"Consultando as opções de reserva de {len(voos)} voo(s) na SerpApi...")
-    for v in voos:
-        antes = pesquisa.serpapi_chamadas
-        try:
-            resultado = pesquisa.opcoes_reserva(v, rota["adultos"], rota["criancas"], rota["bebes_colo"], rota["classe"], moeda)
-        except Exception as erro:
-            progresso(None, None, f"  {v.ida:%d/%m}: falhou ({erro})")
-            continue
-        finally:
-            historico.serpapi_somar(con, datetime.now(), pesquisa.serpapi_chamadas - antes)
-        if resultado and resultado[0] < v.preco:
-            v.reserva_preco, v.reserva_onde = resultado
-    progresso(None, None, f"SerpApi: {historico.serpapi_usadas(con, datetime.now())} busca(s) usadas neste mês.")
+    with closing(historico.abrir(caminho_banco)) as con:  # na interface, o servidor fica aberto: não deixa conexão para trás
+        for v in voos:
+            antes = pesquisa.serpapi_chamadas
+            try:
+                resultado = pesquisa.opcoes_reserva(v, rota["adultos"], rota["criancas"], rota["bebes_colo"], rota["classe"], moeda)
+            except Exception as erro:
+                progresso(None, None, f"  {v.ida:%d/%m}: falhou ({erro})")
+                continue
+            finally:
+                historico.serpapi_somar(con, datetime.now(), pesquisa.serpapi_chamadas - antes)
+            if resultado and resultado[0] < v.preco:
+                v.reserva_preco, v.reserva_onde = resultado
+        progresso(None, None, f"SerpApi: {historico.serpapi_usadas(con, datetime.now())} busca(s) usadas neste mês.")
 
 
 def buscar(rota: dict, geral: dict, reservas: int = 0, progresso: Progresso = _nada,

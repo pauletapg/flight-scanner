@@ -1454,7 +1454,9 @@ function acompanharExecucao() {
         carregarStatus();
       }
     } catch (erro) {
-      avisar(erro.message, "erro");
+      // Sem resposta, o acompanhamento para: os botões voltam (se ainda estiver rodando, o servidor responde 409).
+      avisar(`${erro.message} Use "Atualizar" para ver o estado da execução.`, "erro");
+      for (const id of ["rodar-agora", "rodar-teste"]) document.getElementById(id).disabled = false;
     }
   }, 3000);
 }

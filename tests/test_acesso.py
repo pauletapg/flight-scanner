@@ -193,6 +193,9 @@ def test_modo_rede_redirecionamento_nunca_sai_do_site(app_rede, abrir_cliente):
     cliente = abrir_cliente(app_rede, follow_redirects=False, **CELULAR)
     r = cliente.get(f"//site-malicioso.com/?t={TOKEN}")
     assert r.status_code == 303 and r.headers["location"].startswith("/") and not r.headers["location"].startswith("//")
+    # O navegador lê "/\site" como "//site"; o RedirectResponse codifica a barra invertida (%5C), que fica no caminho.
+    r = abrir_cliente(app_rede, follow_redirects=False, **CELULAR).get(f"/%5Csite-malicioso.com?t={TOKEN}")  # sem cookie
+    assert r.status_code == 303 and r.headers["location"] == "/%5Csite-malicioso.com"
 
 
 def test_modo_rede_cookie_errado_responde_401(app_rede, abrir_cliente):

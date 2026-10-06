@@ -32,14 +32,16 @@ def abrir(caminho: Path | str) -> sqlite3.Connection:
     return con
 
 
-def proximo_lote(con: sqlite3.Connection, chave: str, itens: list, n: int) -> list:
-    """Devolve os próximos n itens a partir do cursor salvo e avança o cursor,
+def proximo_lote(con: sqlite3.Connection, chave: str, itens: list, n: int, avancar: bool = True) -> list:
+    """Devolve os próximos n itens a partir do cursor salvo e avança o cursor (se `avancar`),
     dando a volta no fim da lista. Assim, execuções seguidas cobrem a lista toda."""
     if len(itens) <= n:
         return list(itens)
     linha = con.execute("SELECT valor FROM estado WHERE chave = ?", (chave,)).fetchone()
     inicio = int(linha[0]) % len(itens) if linha else 0
     lote = [itens[(inicio + i) % len(itens)] for i in range(n)]
+    if not avancar:
+        return lote
     con.execute(
         "INSERT OR REPLACE INTO estado (chave, valor) VALUES (?, ?)",
         (chave, str((inicio + n) % len(itens))),

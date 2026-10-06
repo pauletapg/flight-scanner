@@ -187,7 +187,10 @@ def executar(config: dict, nome_rota: str | None = None, dry_run: bool = False) 
         )
     ]
     con = historico.abrir(CAMINHO_BANCO)
-    lote = historico.proximo_lote(con, f"cursor:{nome_rota or '*'}", todas, geral.get("max_buscas_por_execucao", 10))
+    # O --dry-run (o "teste" da interface) não mexe no histórico nem no rodízio; só a cota da SerpApi e o cache
+    # das reservas, que são gastos de verdade, ficam gravados.
+    lote = historico.proximo_lote(con, f"cursor:{nome_rota or '*'}", todas, geral.get("max_buscas_por_execucao", 10),
+                                  avancar=not dry_run)
     log.info("Início: %d de %d combinações de datas", len(lote), len(todas))
 
     resultados = []
@@ -232,7 +235,8 @@ def executar(config: dict, nome_rota: str | None = None, dry_run: bool = False) 
             motivo = historico.deve_alertar(con, rota["nome"], melhor, rota.get("alerta", {}).get("queda_percentual", 10))
             if motivo:
                 alertas.append((rota["nome"], melhor, motivo))
-        historico.salvar(con, rota["nome"], avaliados, moeda, datetime.now())
+        if not dry_run:  # o preço do teste viraria o mínimo do histórico e esconderia a próxima queda
+            historico.salvar(con, rota["nome"], avaliados, moeda, datetime.now())
 
     if not alertas:
         resumo_diario(con, rotas, geral, moeda, dry_run)

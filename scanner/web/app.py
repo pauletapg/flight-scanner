@@ -17,7 +17,7 @@ from urllib.parse import quote
 
 import yaml
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -63,22 +63,14 @@ class RotaEntrada(BaseModel):
 
 
 def montar_rota(e: RotaEntrada) -> dict:
-    """A rota como fica no config.yaml, na mesma ordem de campos que o scanner.buscar grava."""
+    """A rota como fica no config.yaml (rotas.montar_rota, o mesmo do scanner.buscar)."""
     if not (e.ida_entre or e.datas):
         raise HTTPException(422, "Informe as datas: um intervalo de ida (ida_entre) e/ou datas avulsas.")
-    origem, destino = e.origem.strip().upper(), e.destino.strip().upper()
-    rota = {"nome": (e.nome or "").strip() or f"{origem} → {destino}", "origem": origem, "destino": destino}
-    if e.ida_entre:
-        rota["ida_entre"] = list(e.ida_entre)
-        rota["passo_dias"] = e.passo_dias
-    if e.datas:
-        rota["datas"] = [list(d) if isinstance(d, tuple) else d for d in e.datas]
-    if e.duracoes_dias:
-        rota["duracoes_dias"] = e.duracoes_dias
-    rota |= {"adultos": e.adultos, "criancas": e.criancas, "bebes_colo": e.bebes_colo, "classe": e.classe}
-    rota["filtros"] = e.filtros.model_dump(exclude_none=True)
-    rota["alerta"] = {"queda_percentual": e.alerta.queda_percentual}
-    return rota
+    return rotas.montar_rota(
+        e.origem, e.destino, nome=e.nome, ida_entre=e.ida_entre, passo_dias=e.passo_dias, datas=e.datas,
+        duracoes_dias=e.duracoes_dias, adultos=e.adultos, criancas=e.criancas, bebes_colo=e.bebes_colo,
+        classe=e.classe, filtros=e.filtros.model_dump(), queda_percentual=e.alerta.queda_percentual,
+    )
 
 
 class NovaRota(BaseModel):
@@ -114,6 +106,7 @@ _ERROS_PYDANTIC = {
     "missing": "campo obrigatório",
     "greater_than_equal": "precisa ser no mínimo {ge}",
     "greater_than": "precisa ser maior que {gt}",
+    "less_than_equal": "precisa ser no máximo {le}",
     "less_than": "precisa ser menor que {lt}",
     "string_too_short": "precisa ter pelo menos {min_length} caracteres",
     "literal_error": "use um destes: {expected}",
@@ -193,13 +186,17 @@ def criar_app(caminho_config: Path | None = None, caminho_banco: Path = CAMINHO_
     def _invalido(request, erro: RequestValidationError):
         return JSONResponse({"detail": _mensagem_validacao(erro.errors()[0])}, 422)
 
+    @app.exception_handler(Exception)
+    def _inesperado(request, erro: Exception):
+        # Ex.: config.yaml inválido ou banco travado. O traceback continua indo para o log do servidor.
+        return JSONResponse({"detail": f"Erro inesperado no servidor: {type(erro).__name__}: {erro}"}, 500)
+
     # --- rotas monitoradas ---
 
     @app.get("/api/rotas")
     def listar_rotas():
         lista = [r | {"pausada": bool(r.get("pausada"))} for r in rotas.listar(caminho_config)]
-        ativas = sum(not r["pausada"] for r in lista)
-        return {"rotas": jsonable_encoder(lista), "ativas": ativas, "max_ativas": MAX_ROTAS}
+        return {"rotas": jsonable_encoder(lista), "ativas": len(rotas.ativas(lista)), "max_ativas": MAX_ROTAS}
 
     @app.post("/api/rotas", status_code=201)
     def adicionar_rota(pedido: NovaRota):
@@ -218,7 +215,7 @@ def criar_app(caminho_config: Path | None = None, caminho_banco: Path = CAMINHO_
         if pedido.acao == "retomar":
             # A CLI só avisa; a interface recusa, para nunca deixar mais de MAX_ROTAS ativas.
             lista = rotas.listar(caminho_config)
-            ativas = [r["nome"] for r in lista if not r.get("pausada")]
+            ativas = [r["nome"] for r in rotas.ativas(lista)]
             pausada = any(r["nome"] == pedido.nome and r.get("pausada") for r in lista)
             if pausada and len(ativas) >= MAX_ROTAS:
                 raise rotas.VagasEsgotadas(ativas)
@@ -279,7 +276,7 @@ def criar_app(caminho_config: Path | None = None, caminho_banco: Path = CAMINHO_
                 "preco_max": preco_max, "pontos": pontos}
 
     @app.get("/api/alertas")
-    def ver_alertas(rota: str | None = None, limite: int = 100):
+    def ver_alertas(rota: str | None = None, limite: int = Query(100, ge=1, le=1000)):
         with banco() as con:
             linhas = con.execute(
                 "SELECT enviado_em, rota, ida, volta, companhias, preco FROM alertas "
@@ -302,6 +299,12 @@ def criar_app(caminho_config: Path | None = None, caminho_banco: Path = CAMINHO_
 
     @app.post("/api/executar", status_code=202)
     def executar(pedido: PedidoExecucao):
+        # Duas execuções juntas dobram as buscas no Google (risco de bloqueio), a cota da SerpApi e os alertas.
+        inicio = status.execucao_em_andamento(caminho_log)
+        if inicio:
+            liberado = inicio + status.JANELA_EXECUCAO
+            raise tarefas.Ocupado(f"O scanner está rodando agora (começou às {inicio:%H:%M} e ainda não terminou); "
+                                  f"espere terminar. Se ele foi interrompido, o botão volta a funcionar às {liberado:%H:%M}.")
         return execucoes.iniciar(pedido.dry_run)
 
     @app.get("/api/executar")

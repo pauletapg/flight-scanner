@@ -574,3 +574,94 @@
 - Da Etapa 6, ainda para a Etapa 8: o `fast_flights` carregando o `.env` ao ser importado.
 - O usuário rever as regras de firewall do Python em perfil Público (ver Observações).
 - Commitar à parte, se for o caso, as mudanças do resumo diário (não são desta etapa).
+
+## Etapa 8: Revisão final · 2026-10-06 · concluída
+**Modelo:** Opus 5.5 · **Esforço:** high
+
+**O que foi feito**
+- `/code-review` (high) sobre `afcfb2b..HEAD` (tudo desde a versão inicial, ~5.900 linhas): 10 achados, 9 corrigidos e
+  1 falso positivo. Correções:
+  - **`--dry-run` não grava mais o histórico** (decisão do usuário): `main.executar` pula `historico.salvar` e chama
+    `historico.proximo_lote(..., avancar=False)`. Antes, um "Rodar sem enviar (teste)" gravava os preços; se o preço
+    tivesse caído, esse valor virava o mínimo e o alerta de queda da execução real seguinte não saía. A cota da
+    SerpApi e o cache das reservas continuam gravados (são gastos de verdade). Texto da tela de status e README ajustados.
+  - **"Rodar agora" não roda junto com a tarefa agendada**: `status.execucao_em_andamento(caminho_log)` (último "Início"
+    sem "Fim" há menos de 20 min, `JANELA_EXECUCAO`) e `POST /api/executar` responde 409 dizendo a hora em que começou e
+    a hora em que o botão volta (caso a execução tenha caído no meio).
+  - **Erro inesperado da API em `{"detail": ...}`** (regra do CLAUDE.md): handler de `Exception` em `criar_app`
+    ("Erro inesperado no servidor: Tipo: mensagem"); antes saía "Internal Server Error" em texto.
+  - `/api/alertas`: `limite` entre 1 e 1000 (`LIMIT -1` no SQLite é "sem limite"); mensagem `less_than_equal` em português.
+  - `busca_avulsa.consultar_reservas` fecha a conexão do SQLite (`closing`); no servidor aberto, cada busca com
+    reservas deixava uma conexão para trás.
+  - `rotas._blocos` guarda os comentários entre `rotas:` e a primeira rota (antes, qualquer edição os apagava).
+  - `rotas.montar_rota` (novo, usado por `buscar.montar_rota` e `app.montar_rota`) e `rotas.ativas` (antes `_ativas`,
+    agora também em `app.py` e `buscar.gerenciar`): acabou a montagem de rota duplicada entre CLI e API.
+  - `app.js`: se a consulta do "Rodar agora" falha, os botões voltam a funcionar (antes ficavam desabilitados).
+- Testes novos: `tests/test_main.py` (dry-run não grava; execução normal grava preços, alertas e o cursor), 4 em
+  `test_web.py` (409 com execução em andamento; execução interrompida há 2 h não trava; erro inesperado em `detail`;
+  `limite` inválido), 3 em `test_rotas.py` (comentário abaixo de `rotas:`, `ativas`, `montar_rota`) e 1 em
+  `test_acesso.py` (barra invertida no redirecionamento).
+- `.claude/launch.json`: a configuração `interface` passou para a porta 8767 (a 8766 agora é de outro projeto,
+  "estudos-bacen-teste"); `CLAUDE.md` e o exemplo do README acompanham.
+- `CLAUDE.md`: o que o `--dry-run` grava, `rotas.montar_rota`/`rotas.ativas` e o 409 do "Rodar agora".
+
+**Skills usadas**
+- code-review: revisão `high` de `afcfb2b..HEAD` com os 8 ângulos; achados e desfechos registrados pela ferramenta de achados.
+- superpowers:verification-before-completion: carregada antes da conferência final; cada item do "Pronto quando" abaixo
+  tem o comando e a saída que o comprovam.
+- superpowers:test-driven-development (fora da lista, sem carregar a skill): cada correção com teste visto falhando antes.
+
+**Desvios do plano**
+- O `--dry-run` do `scanner.main` mudou de comportamento (não grava preços nem avança o rodízio). O plano dizia que o
+  `scanner.main` não muda; a execução agendada (sem `--dry-run`) continua igual, e a mudança foi escolha do usuário.
+- A porta da configuração `interface` do `launch.json` mudou de 8766 para 8767 (conflito com outro projeto).
+- Achado do `fast_flights` carregando o `.env` (pendência das Etapas 3 a 7): avaliado e **sem mudança**. O
+  `load_dotenv()` dele procura o `.env` subindo de `.venv\Lib\site-packages\fast_flights\integrations` e acha o do
+  projeto, o mesmo que `main`, `buscar` e o servidor já carregam; nos programas não muda nada. Nos testes, a fixture
+  `sem_chaves_reais` do `conftest.py` já apaga as chaves (ntfy, CallMeBot, SerpApi), e o `INTERFACE_TOKEN` que entra
+  não é usado por nenhum teste (o `app` do módulo só lê `FLIGHT_SCANNER_REDE`).
+
+**Problemas e correções**
+- Achado "redirecionamento com `\` no caminho sai do site" (`acesso._entrar`): **falso positivo**. O `RedirectResponse`
+  do Starlette codifica a barra invertida (`Location: /%5Csite.com`), que o navegador trata como caminho. Ficou um teste
+  de regressão em `test_acesso.py`.
+- Meu primeiro teste do dry-run esperava "1 alerta(s)"; eram 2 (um por combinação). Corrigido o teste antes de ver o
+  vermelho verdadeiro (2 preços gravados em vez de 0).
+- A primeira tentativa de editar `main.py`/`historico.py` por um script Python lido do stdin falhou: o stdin veio em
+  cp1252 e os acentos não bateram (nada foi gravado). Refeito com a ferramenta de edição.
+- O teste da barra invertida deu 404 em vez de 303: o primeiro pedido do mesmo teste já tinha gravado o cookie, então o
+  segundo nem passou pelo redirecionamento. Usei um cliente novo.
+- `preview_start` recusou a 8766 (ocupada pelo servidor de outra conversa) → `launch.json` para 8767.
+
+**Observações**
+- A revisão da Etapa 7 em Opus (pendência): `acesso.py` sem achados novos além do falso positivo. Conferidos IP+Host
+  loopback, IPv6 mapeado, `compare_digest` em bytes, CSRF (cabeçalho, `Origin`, `Sec-Fetch-Site`), cookie
+  `HttpOnly`/`Lax`, CSP. O `/api/desligar` exige o cabeçalho anti-CSRF e `{"confirmar": true}`; em modo rede, o celular
+  com token também pode desligar, que é o esperado.
+- `selectolax` é importado direto por `scanner/pesquisa.py` e não está no `requirements.txt`; vem como dependência do
+  `fast-flights` 3.1.0 (que o fixa). Deixei assim.
+- O "Rodar agora" usa o log para saber se há execução em andamento: se uma execução cair sem escrever "Fim", o botão
+  fica recusando por até 20 min (a mensagem diz a hora em que volta).
+- O `config.yaml` e os arquivos do resumo diário (`main.py`, `historico.py`, `tests/test_historico.py`) tinham
+  mudanças de fora desta etapa; as minhas em `main.py` e `historico.py` ficam junto delas no mesmo arquivo.
+
+**Verificação**
+- `.\.venv\Scripts\python.exe -m pytest`: 147 passaram, 0 falharam (9 novos). `node --check app.js`: ok.
+- Red/green: dry-run (2 preços gravados → 0), 409 com execução em andamento (202 → 409), erro inesperado (texto →
+  JSON), `limite=-1` (200 → 422), comentário abaixo de `rotas:` (apagado → mantido), `ativas`/`montar_rota`
+  (AttributeError → ok), todos vistos falhando antes da correção.
+- "Pronto quando":
+  - `pytest` passa: ok (147).
+  - `/code-review` sem achados confirmados em aberto: ok (9 corrigidos, 1 falso positivo).
+  - CLI com o `config.yaml` e o banco reais: `buscar --listar` ok; `main --dry-run` real (10 buscas no Google, código 0,
+    "Fim: nenhum alerta") com `precos` em 3.228 linhas e o cursor `cursor:*` = 1 antes e depois.
+  - Interface com os dados reais (navegador embutido, porta 8767): as 4 telas carregam sem erro no console; "Pausar"
+    pela interface aparece como `[PAUSADA]` no `buscar --listar` e "Retomar" volta para `[ativa]`, com o `config.yaml`
+    idêntico byte a byte ao backup; "Buscar agora" real RIO → REC 22/12 só ida: 1/1, 15 voos, R$ 1.081, link e
+    "Monitorar esta busca" na tela.
+- NÃO conferido: o acesso pelo celular (o usuário ainda não testou).
+
+**Pendências**
+- O usuário testar no celular: `Flight Scanner (celular).cmd`, aba Status, Copiar, abrir no celular no mesmo Wi-Fi.
+- O usuário rever as regras de firewall do Python em perfil Público (ver a Etapa 7).
+- Plano concluído: não há próxima etapa.
