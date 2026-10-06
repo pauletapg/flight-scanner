@@ -373,6 +373,14 @@ input.curto { max-width: 9em; }
 .erros .nivel { font-family: var(--fonte-sinal); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }
 .erros .nivel.WARNING { color: var(--ambar); }
 .erros .nivel.ERROR, .erros .nivel.CRITICAL { color: var(--vermelho); }
+/* Acesso pelo celular: o endereço com o token, em campo só de leitura para selecionar e copiar. */
+.linha-endereco { display: flex; align-items: center; gap: var(--e2); flex-wrap: wrap; }
+.linha-endereco .hora { color: var(--tinta-2); min-width: 9.5em; }
+.linha-endereco input.endereco { flex: 1 1 18em; min-width: 0; font-family: var(--fonte-mono); font-size: 13px; }
+#quadro-acesso details summary { cursor: pointer; }
+#quadro-acesso details .dica { margin: var(--e2) 0; }
+#quadro-acesso details .linha-endereco + .linha-endereco { margin-top: var(--e2); }
+
 .erros details summary { cursor: pointer; overflow-wrap: anywhere; }
 .erros details pre { margin-top: var(--e2); }
 .erros .sem-detalhe { overflow-wrap: anywhere; }

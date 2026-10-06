@@ -16,6 +16,9 @@ Detalhes de uso no README.md. Textos, comentários e documentação em portuguê
   botão "Desligar interface" (`POST /api/desligar` com `{"confirmar": true}`: SIGINT depois de 0,5 s, `os._exit`
   se não sair em 5 s). Para testar o `.cmd` por ferramenta, o servidor herda a pipe da chamada e ela só termina
   quando o servidor fecha: rode em segundo plano ou desligue o servidor logo depois. Arquivo em UTF-8 com CRLF.
+- Acesso pelo celular: `Flight Scanner.cmd --rede` (ou o `Flight Scanner (celular).cmd`, que o chama) sobe com
+  `--host 0.0.0.0` e `FLIGHT_SCANNER_REDE=1`; o app então exige token. Se já houver servidor em modo local, avisa e
+  sai com 1. Ao subir o uvicorn à mão com `pythonw`, redirecione a saída (sem ela `sys.stdout` é `None` e o log quebra).
 
 ## Convenções
 
@@ -48,6 +51,18 @@ Detalhes de uso no README.md. Textos, comentários e documentação em portuguê
   de 30, mandando `forcar`); `GET /api/busca` devolve a busca em andamento ou a última, com a rota completa em
   `config` (a página retoma o progresso e o "Monitorar esta busca" usa essa rota, não o formulário).
 - Erros da API sempre em `{"detail": "<mensagem em português>"}`; os de `ErroRota` levam também `ativas` ou `nomes`.
+- Acesso (`scanner/web/acesso.py`, um middleware ligado por `criar_app(token=...)`): "é o PC" = IP de origem loopback
+  **e** `Host` loopback (barra DNS rebinding). Sem token (modo local) o resto recebe 403; com token (modo rede,
+  `FLIGHT_SCANNER_REDE=1`) recebe 401, e entra com `?t=` (GET vira cookie `HttpOnly`, `SameSite=Lax`, 303 sem o token na
+  URL) ou com o cookie. O token vem de `INTERFACE_TOKEN` no `.env` (`garantir_token` gera e grava, preservando o resto
+  e o CRLF; recusa token com menos de 20 caracteres). `GET /api/acesso` devolve os endereços com o token (todas as
+  placas de rede privadas, a de saída primeiro). Toda ação que grava (POST/PUT/DELETE...) exige o cabeçalho
+  `X-Flight-Scanner` (o `api()` do `app.js` manda; é a proteção contra CSRF, junto com `Origin` = `Host` e
+  `Sec-Fetch-Site`), e toda resposta leva CSP (`style-src 'unsafe-inline'` só para o `style=` do `app.js`), `nosniff`,
+  `X-Frame-Options`, `Referrer-Policy`; `/api/*` leva `no-store`. `/docs`, `/redoc` e `/openapi.json` estão desligados.
+  Nos testes, use a fixture `abrir_cliente(app, ip=..., host=..., csrf=...)` (conftest): ela age como o navegador do PC;
+  um `TestClient(app)` puro (IP `testclient`, sem o cabeçalho) leva 403. Os testes nunca gravam no `.env` real
+  (`garantir_token` só com `tmp_path`).
 - Nos testes, `tests/conftest.py` aponta `rotas.CAMINHO_CONFIG` para um arquivo inexistente: quem precisa de
   config usa `tmp_path` (passando `caminho=` ou com monkeypatch). Nunca gravar no `config.yaml` real.
 - `.env`, `data/`, `logs/` e `.venv` ficam fora do git.

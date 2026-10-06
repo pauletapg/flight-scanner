@@ -2,7 +2,7 @@
 
 Rodar: .\\.venv\\Scripts\\python.exe -m uvicorn scanner.web.app:app --port 8765
 A lógica fica nos mesmos módulos da CLI (rotas, busca_avulsa, relatorio, historico, notificar);
-aqui só há a tradução para HTTP."""
+aqui só há a tradução para HTTP. Quem pode chamar (o PC, ou o celular com token) é decidido em acesso.py."""
 
 import os
 import signal
@@ -13,10 +13,11 @@ from contextlib import asynccontextmanager, closing
 from datetime import date
 from pathlib import Path
 from typing import Literal
+from urllib.parse import quote
 
 import yaml
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -26,7 +27,7 @@ from pydantic import BaseModel, Field
 from scanner import busca_avulsa, historico, notificar, relatorio, rotas
 from scanner.busca_avulsa import LIMITE_SEM_CONFIRMAR
 from scanner.main import CAMINHO_BANCO, MAX_ROTAS, PASTA
-from scanner.web import status, tarefas
+from scanner.web import acesso, status, tarefas
 
 PASTA_STATIC = Path(__file__).resolve().parent / "static"
 CAMINHO_LOG = PASTA / "logs" / "scanner.log"
@@ -150,8 +151,9 @@ def encerrar_servidor() -> None:
 def criar_app(caminho_config: Path | None = None, caminho_banco: Path = CAMINHO_BANCO,
               caminho_log: Path = CAMINHO_LOG, consultar_tarefas=status.consultar_tarefas,
               comando_scanner: list[str] | None = None, arquivo_env: Path | None = None,
-              desligar=encerrar_servidor) -> FastAPI:
-    """Sem caminho_config, usa rotas.CAMINHO_CONFIG (lido na hora de cada requisição)."""
+              desligar=encerrar_servidor, token: str | None = None) -> FastAPI:
+    """Sem caminho_config, usa rotas.CAMINHO_CONFIG (lido na hora de cada requisição).
+    Sem token (modo local), só o próprio PC acessa; com token (modo rede), o celular entra por ele."""
 
     @asynccontextmanager
     async def ciclo(app):
@@ -159,7 +161,10 @@ def criar_app(caminho_config: Path | None = None, caminho_banco: Path = CAMINHO_
             load_dotenv(arquivo_env)  # chaves do ntfy e da SerpApi, como no scanner.main
         yield
 
-    app = FastAPI(title="Flight Scanner", lifespan=ciclo)
+    # Sem /docs, /redoc e /openapi.json: buscam script em CDN (a política de conteúdo bloqueia) e o "Try it out"
+    # não mandaria o cabeçalho anti-CSRF; a API é só desta página.
+    app = FastAPI(title="Flight Scanner", lifespan=ciclo, docs_url=None, redoc_url=None, openapi_url=None)
+    acesso.instalar(app, token)
     buscas = tarefas.Buscas()
     execucoes = tarefas.Execucoes(comando_scanner or _comando_padrao(), PASTA)
 
@@ -318,8 +323,27 @@ def criar_app(caminho_config: Path | None = None, caminho_banco: Path = CAMINHO_
         desligar()
         return {"ok": True}
 
+    # --- acesso pelo celular ---
+
+    @app.get("/api/acesso")
+    def ver_acesso(request: Request):
+        """Como abrir no celular: o endereço (com o token) de cada placa de rede do PC. Só existe no modo rede."""
+        if token is None:
+            return {"rede": False}
+        porta = (request.scope.get("server") or (None, 80))[1]
+        senha = quote(token, safe="")  # o token do .env pode ter sido digitado à mão: &, # e espaço quebrariam a URL
+        return {"rede": True, "porta": porta,
+                "enderecos": [{"ip": ip, "url": f"http://{ip}:{porta}/?t={senha}"} for ip in acesso.enderecos_locais()]}
+
     app.mount("/", StaticFiles(directory=PASTA_STATIC, html=True), name="static")
     return app
 
 
-app = criar_app(arquivo_env=PASTA / ".env")
+def _token_da_rede() -> str | None:
+    """O atalho com --rede define FLIGHT_SCANNER_REDE=1: a interface passa a exigir token, guardado no .env."""
+    if os.environ.get("FLIGHT_SCANNER_REDE") != "1":
+        return None
+    return acesso.garantir_token(PASTA / ".env")
+
+
+app = criar_app(arquivo_env=PASTA / ".env", token=_token_da_rede())

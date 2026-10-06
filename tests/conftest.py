@@ -1,4 +1,5 @@
 import pytest
+from fastapi.testclient import TestClient
 
 from scanner import buscar, rotas
 
@@ -17,3 +18,14 @@ def sem_chaves_reais(monkeypatch):
     Sem estas variáveis, nenhum teste envia notificação nem gasta a SerpApi de verdade; quem precisa usa setenv."""
     for nome in ("NTFY_TOPIC", "NTFY_SERVER", "CALLMEBOT_PHONE", "CALLMEBOT_APIKEY", "SERPAPI_KEY"):
         monkeypatch.delenv(nome, raising=False)
+
+
+@pytest.fixture
+def abrir_cliente():
+    """Cliente de teste que age como o navegador do próprio PC: IP e Host de loopback e o cabeçalho que a página
+    manda em toda chamada (proteção contra CSRF). Para simular outro aparelho, passe `ip=` e `host=`."""
+    def abrir(app, ip="127.0.0.1", host="127.0.0.1:8765", csrf=True, cabecalhos=None, **extra):
+        enviados = ({"X-Flight-Scanner": "1"} if csrf else {}) | (cabecalhos or {})
+        return TestClient(app, base_url=f"http://{host}", client=(ip, 50000), headers=enviados, **extra)
+
+    return abrir

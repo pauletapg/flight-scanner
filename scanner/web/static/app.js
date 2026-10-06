@@ -26,9 +26,11 @@ function preencher(elemento, atributos, filhos) {
   return elemento;
 }
 
-/** Chama a API; em erro, lança Error com a mensagem do {"detail": ...} e os dados extras em .dados. */
+/** Chama a API; em erro, lança Error com a mensagem do {"detail": ...} e os dados extras em .dados.
+ * O cabeçalho X-Flight-Scanner vai em toda chamada: o servidor só aceita ações que gravam vindas desta página
+ * (um site de fora não consegue mandar cabeçalho próprio sem a permissão do navegador). */
 async function api(metodo, caminho, corpo) {
-  const opcoes = { method: metodo, headers: {} };
+  const opcoes = { method: metodo, headers: { "X-Flight-Scanner": "1" } };
   if (corpo !== undefined) {
     opcoes.headers["Content-Type"] = "application/json";
     opcoes.body = JSON.stringify(corpo);
@@ -1356,8 +1358,70 @@ function desenharExecucao(execucao) {
     rodando ? null : h("pre", { class: "console" }, (execucao.saida || "(sem saída)").replace(/\r/g, ""))));
 }
 
+function linhaEndereco(endereco) {
+  const campo = h("input", { class: "endereco", readonly: true, value: endereco.url, spellcheck: "false",
+    "aria-label": `Endereço ${endereco.ip}`, onfocus: (evento) => evento.target.select() });
+  return h("div", { class: "linha-endereco" },
+    h("span", { class: "hora" }, endereco.ip),
+    campo,
+    h("button", { type: "button", class: "botao", onclick: () => copiarEndereco(campo) }, "Copiar"));
+}
+
+/** Copia o endereço. A API de área de transferência só existe em página segura (https ou localhost): no celular,
+ * por http://IP, cai no select + copy; se nem isso, a pessoa copia à mão (o texto já fica selecionado). */
+async function copiarEndereco(campo) {
+  try {
+    await navigator.clipboard.writeText(campo.value);
+  } catch {
+    campo.select();
+    if (!document.execCommand("copy")) {
+      avisar("Não consegui copiar sozinho: o endereço está selecionado, copie à mão.", "erro");
+      return;
+    }
+  }
+  avisar("Endereço copiado.");
+}
+
+function quadroAcesso(acesso) {
+  if (!acesso.rede) {
+    return [
+      h("p", null, h("span", { class: "atencao" }, "Desligado."), " A interface só responde neste PC."),
+      h("p", { class: "explica" }, "Para abrir no celular, desligue a interface (botão abaixo) e dê dois cliques em ",
+        "\"Flight Scanner (celular).cmd\". Esta tela vai mostrar o endereço para digitar no celular."),
+    ];
+  }
+  if (!acesso.enderecos.length) {
+    return [h("p", { class: "ruim" }, "Não achei o endereço deste PC na rede. Ele está conectado ao Wi-Fi?")];
+  }
+  const [principal, ...outros] = acesso.enderecos;
+  return [
+    h("p", null, h("span", { class: "ok" }, "Ligado."),
+      " No celular, conectado ao mesmo Wi-Fi, abra o endereço abaixo. Só na primeira vez: depois o celular lembra."),
+    linhaEndereco(principal),
+    outros.length
+      ? h("details", null, h("summary", null, `Outros endereços deste PC (${outros.length})`),
+        h("p", { class: "dica" }, "Se o primeiro não abrir, tente um destes: com VPN ou máquina virtual, o PC tem mais de uma rede."),
+        ...outros.map(linhaEndereco))
+      : null,
+    h("p", { class: "explica" }, "Quem tiver este endereço controla a interface: não o publique nem o mande para outras pessoas. ",
+      "A conexão não é criptografada (HTTP), então use só no Wi-Fi de casa. ",
+      "Para trocar o token e desconectar os celulares, apague a linha INTERFACE_TOKEN do arquivo .env e abra o atalho de novo. ",
+      "Se o celular não abrir a página, o suspeito é o Firewall do Windows (libere o Python só em redes privadas): veja o README."),
+  ];
+}
+
+async function carregarAcesso() {
+  const corpo = document.querySelector("#quadro-acesso .corpo");
+  try {
+    corpo.replaceChildren(...quadroAcesso(await api("GET", "/api/acesso")));
+  } catch (erro) {
+    corpo.replaceChildren(h("p", { class: "ruim" }, `Não consegui ler o acesso: ${erro.message}`));
+  }
+}
+
 async function carregarStatus() {
   pararAcompanhamento();
+  carregarAcesso();
   const corpos = ["execucao", "tarefa", "serpapi"].map((n) => document.querySelector(`#quadro-${n} .corpo`));
   let s;
   try {

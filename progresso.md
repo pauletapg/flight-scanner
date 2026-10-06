@@ -467,3 +467,110 @@
 **Pendências**
 - Etapa 7 (opcional) depende de decisão do usuário e do firewall; a Etapa 8 deve revisar o `/api/desligar` e o
   `fast_flights` carregando o `.env` ao ser importado.
+
+## Etapa 7 (opcional): Acesso pelo celular na rede Wi-Fi · 2026-10-06 · concluída
+**Modelo:** Sonnet 5.5 (o plano pede Opus 5.5; o system prompt desta sessão mostrou Sonnet 5.5, a troca de modelo não pegou) · **Esforço:** high
+
+**O que foi feito**
+- `scanner/web/acesso.py` (novo): `garantir_token` (lê ou gera `INTERFACE_TOKEN` no `.env`, gravação atômica, preserva o
+  resto e o CRLF, recusa token com menos de 20 caracteres), `enderecos_locais` (IPv4 de rede privada, o da rota de saída
+  primeiro; sem loopback, link-local, CGNAT de VPN nem públicos) e o middleware `instalar(app, token)`.
+- Modo local (padrão): só é "o PC" quem chega de IP loopback **e** com `Host` loopback (127.0.0.1, localhost, ::1; barra
+  DNS rebinding); o resto recebe 403 mesmo se o uvicorn for subido em `0.0.0.0` sem `--rede`. Modo rede (`token`):
+  o PC continua entrando direto; os demais precisam do cookie `flight_scanner_token` (`HttpOnly`, `SameSite=Lax`,
+  30 dias) ou de `?t=<token>` num GET, que grava o cookie e redireciona (303) para a mesma página sem o token. Sem
+  token ou com token errado: 401 (JSON em `/api/*`, página HTML simples no resto, incluindo os estáticos).
+- CSRF em toda ação que grava (qualquer método fora GET/HEAD/OPTIONS): exige o cabeçalho `X-Flight-Scanner`, `Origin` igual
+  ao `Host` e `Sec-Fetch-Site` same-origin/none quando informados. Respostas levam CSP (`default-src 'self'`,
+  `style-src` com `'unsafe-inline'` só por causa do `style=` do `app.js`, `img-src data:` pelo favicon, `frame-ancestors
+  'none'`), `nosniff`, `X-Frame-Options`, `Referrer-Policy: no-referrer`; `/api/*` leva `no-store`.
+- `scanner/web/app.py`: `criar_app(token=...)`; `GET /api/acesso` (`{"rede": false}` ou os endereços com o token
+  codificado na URL e a porta real); o `app` do módulo lê `FLIGHT_SCANNER_REDE=1` para ligar o modo rede; `/docs`,
+  `/redoc` e `/openapi.json` desligados.
+- Front: `api()` manda `X-Flight-Scanner` em toda chamada; cartão "Acesso pelo celular" na tela de status (endereço em
+  campo só de leitura, botão Copiar com fallback para `execCommand`, "Outros endereços deste PC", avisos de segurança e
+  de firewall); CSS do cartão.
+- `Flight Scanner.cmd --rede` (`--host 0.0.0.0`, `FLIGHT_SCANNER_REDE=1`, `--no-proxy-headers`, abre direto em `#status`;
+  se já há servidor em modo local, avisa e sai com 1) e `Flight Scanner (celular).cmd` (chama o anterior com `--rede`).
+- Testes: `tests/test_acesso.py` (32), fixture `abrir_cliente` no `conftest.py` (age como o navegador do PC), e
+  `tests/test_web.py` passou a usá-la. README (seção "Acesso pelo celular"), `CLAUDE.md` e `.env.example` atualizados.
+
+**Skills usadas**
+- security-review: tentei carregar; falhou porque a skill compara com `origin/HEAD` e o repositório não tem remoto.
+  Fiz a revisão à mão (autenticação, bypass pelo IP/Host, CSRF, redirecionamento aberto, XSS, vazamento de token em
+  URL/log/linha de comando, traversal, superfície sem login). Achados: ver "Problemas e correções".
+- superpowers:test-driven-development (fora da lista): testes escritos antes do código, vistos falhando
+  (ImportError do `acesso`) e, nos achados da revisão, vermelhos antes da correção.
+- anthropic-skills:built-in-browser: usei as ferramentas do navegador embutido, sem carregar a skill.
+
+**Desvios do plano**
+- **Sem QR code**, por escolha do usuário (opções: biblioteca `segno`, gerador próprio, ou só o link). A tela mostra o
+  endereço e o botão Copiar; o usuário manda o link ao celular por outro meio. Nenhuma dependência nova.
+- **O PC não precisa do token** (o plano dizia que o token é exigido): vale IP loopback + `Host` loopback. Mantém o
+  atalho simples (nada a passar na URL) e o DNS rebinding cai no caso "precisa do token".
+- **CSRF e verificação de Host valem também no modo local**, não só em `--rede`: antes, um POST sem corpo (como
+  `/api/notificacao-teste`) podia ser disparado por um formulário de outra página. Consequência: os testes antigos de
+  `test_web.py` precisaram da fixture `abrir_cliente`, e um `TestClient(app)` puro agora leva 403.
+- Cookie `SameSite=Lax`, não `Strict`: com `Strict` um link aberto a partir de outro app/site perderia o cookie
+  depois do redirecionamento e daria 401 na primeira abertura. POST de outro site continua sem o cookie e ainda
+  esbarra no cabeçalho e no `Origin`.
+- Extras não previstos: `Flight Scanner (celular).cmd` (duplo clique não passa argumento), lista de todos os endereços
+  (este PC tem VPN e VirtualBox além do Wi-Fi), CSP e demais cabeçalhos, `/docs` desligado, `--no-proxy-headers`.
+
+**Problemas e correções**
+- `garantir_token` lia o `.env` com `read_text`, que no Windows troca `\r\n` por `\n`: a detecção de CRLF nunca
+  funcionava e o `.env` real (que é CRLF) teria ficado misturado. Pego pelo teste de CRLF; agora lê com `newline=""`.
+- Um teste meu procurava "só neste computador", mas a mensagem diz "só responde neste computador"; corrigi o teste.
+- Depois do middleware, 36 testes de `test_web.py` falharam com 403: esperado (o `TestClient` padrão não é o PC);
+  ajustei as fixtures em vez de afrouxar a regra.
+- Revisão de segurança, achado 1: o token do `.env` pode ser digitado à mão e `&`, `#` ou espaço quebrariam o
+  endereço mostrado (URL montada com dado do usuário) → `urllib.parse.quote` em `/api/acesso`, com teste.
+- Revisão, achado 2: `/docs` e `/redoc` carregam script de CDN (a CSP bloqueia) e o "Try it out" não mandaria o
+  cabeçalho anti-CSRF → desligados, com teste.
+- Meu teste do plano B (uvicorn em `0.0.0.0` sem `--rede`) falhou 3 vezes por erro do teste: `Start-Process` não herda o
+  diretório do PowerShell (`scanner.web.app` não importava) e `pythonw` sem redirecionar a saída deixa `sys.stdout`
+  como `None` e o uvicorn não sobe. Com `-WorkingDirectory` e redirecionamento, deu 200 no PC e 403 pela rede.
+- Falso alarme: a linha de comando do `pythonw` aparentava não ter `--no-proxy-headers`; era o `Format-List` quebrando a linha.
+- "Copiar" falhou quando o acionei por `.click()` de JavaScript (não é gesto de usuário, o navegador nega a área de
+  transferência); com clique real, "Endereço copiado." O 403 que ficou no console era o meu `fetch` sem cabeçalho,
+  feito de propósito para provar a recusa.
+- O Bash recusou o heredoc longo do diário (erro de parse, nada foi gravado); gravei com a ferramenta de edição.
+
+**Observações**
+- **Firewall deste PC:** o Wi-Fi `mlswifi305_5G` está como **Pública** e existem regras de entrada, TCP e UDP em qualquer
+  porta, liberadas só no perfil Público para o `python.exe` (3.11 e 3.14) e o `pythonw.exe` (3.14), que é a base do
+  `.venv`. Por isso o celular deve alcançar o servidor aqui, mas a orientação do plano ("só rede privada") não vale
+  neste PC (em perfil Privado não há regra e o Windows bloquearia/perguntaria). O mesmo vale para qualquer programa
+  Python que escute na rede em Wi-Fi público: o usuário deveria revisar essas regras. Não alterei (configuração do sistema).
+- Riscos residuais, aceitos e documentados no README e na tela: conexão HTTP sem criptografia (o token é visível a quem
+  captura o tráfego do mesmo Wi-Fi); cookie não é isolado por porta (outro serviço do PC, aberto pelo mesmo IP, receberia
+  o cookie); sessão de 30 dias sem revogação, a não ser trocando o token (apagar `INTERFACE_TOKEN` do `.env`).
+- O token apareceu em capturas de tela desta sessão (só locais). Não o repeti em respostas.
+- Estas alterações estavam no working tree e **não são desta etapa** (gravadas às 01:11 por fora da sessão; ficaram fora
+  do commit): resumo diário em `scanner/main.py`, `scanner/historico.py`, `tests/test_historico.py` e
+  `resumo_diario_hora` no `config.yaml`. A suíte passa com elas (138 testes).
+- O servidor de desenvolvimento antigo da 8766 (`--reload`) continua de pé, só em `127.0.0.1`; não é desta etapa.
+- Servidor da 8765 desligado ao fim, para não deixar porta aberta no Wi-Fi sem uso.
+
+**Verificação**
+- `.\.venv\Scripts\python.exe -m pytest`: 138 passaram, 0 falharam (32 novos). `node --check app.js`: ok.
+- "Pronto quando":
+  - testes cobrem 401 sem token e acesso com token: ok (`tests/test_acesso.py`).
+  - abrindo pelo celular na mesma rede a interface funciona: **NÃO conferido** (o usuário vai testar depois). Conferi com
+    o servidor real em `0.0.0.0` pedindo pelo IP da rede do próprio PC (192.168.2.242, que chega como não-loopback):
+    401 sem token e com token errado; 303 + cookie `HttpOnly` com o certo; 200 com o cookie; 403 em POST sem
+    cabeçalho ou com `Origin` de outro site; 401 com Host forjado; 404 em tentativas de `../`; uvicorn em `0.0.0.0` sem
+    `--rede` → 200 no PC e 403 pela rede. O que o IP próprio não prova é o caminho físico Wi-Fi → PC e o firewall.
+  - `security-review` sem achados graves pendentes: a skill não rodou (sem `origin/HEAD`); a revisão manual achou 2
+    problemas, corrigidos e testados; ficam só os riscos residuais acima.
+- Atalho: `--rede` sobe em `0.0.0.0` e grava o token no `.env` (13 linhas antigas idênticas byte a byte, CRLF mantido);
+  rodar de novo não abre 2º servidor; `--rede` contra servidor em modo local avisa e sai com 1; o atalho comum não
+  expõe a rede (conexão recusada pelo IP da rede); "Desligar interface" encerra nos dois modos. Nenhum token em linha
+  de comando. Navegador embutido: console sem erros, layout em 375 px sem rolagem horizontal.
+
+**Pendências**
+- O usuário testar no celular (Wi-Fi `mlswifi305_5G`): `Flight Scanner (celular).cmd`, aba Status, Copiar, abrir no celular.
+  A Etapa 8 deve confirmar isso e, em Opus como o plano pede, rever `scanner/web/acesso.py` e o `/api/desligar`.
+- Da Etapa 6, ainda para a Etapa 8: o `fast_flights` carregando o `.env` ao ser importado.
+- O usuário rever as regras de firewall do Python em perfil Público (ver Observações).
+- Commitar à parte, se for o caso, as mudanças do resumo diário (não são desta etapa).

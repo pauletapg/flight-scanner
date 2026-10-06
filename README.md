@@ -99,8 +99,9 @@ Mostra os melhores voos de cada combinação de datas, com o link do Google Flig
 Tudo o que o `config.yaml` e o terminal fazem também dá para fazer numa página no navegador.
 Dê dois cliques em **`Flight Scanner.cmd`**: se o servidor ainda não estiver no ar, ele sobe sem
 deixar janela de console e abre `http://127.0.0.1:8765`. Rodar de novo só abre a página.
-A página só responde neste PC. As buscas agendadas (seção 4) não dependem dela: rodam com a
-interface aberta ou não. O `Fast scanner.cmd`, com a busca pelo terminal, continua como está.
+Por padrão a página só responde neste PC (para abrir no celular, veja "Acesso pelo celular" abaixo).
+As buscas agendadas (seção 4) não dependem dela: rodam com a interface aberta ou não. O
+`Fast scanner.cmd`, com a busca pelo terminal, continua como está.
 
 - **Buscar agora**: a busca avulsa do terminal, com o progresso na tela, e depois "Monitorar esta
   busca" para guardar a rota no `config.yaml`. Antes de buscar, mostra quantas combinações de datas
@@ -121,6 +122,34 @@ uso por outro programa, feche-o e tente de novo. Para subir o servidor à mão, 
 ```powershell
 .\.venv\Scripts\python.exe -m uvicorn scanner.web.app:app --port 8766
 ```
+
+### Acesso pelo celular (opcional)
+
+Dê dois cliques em **`Flight Scanner (celular).cmd`** (é o `Flight Scanner.cmd --rede`). O servidor passa a
+atender também o celular que estiver no mesmo Wi-Fi do PC, e a página abre na tela de status, em
+**Acesso pelo celular**: ali está o endereço do PC na rede, `http://192.168.x.x:8765/?t=...`, com um botão
+"Copiar". Mande o endereço para o celular (WhatsApp, e-mail) e abra-o lá **uma vez**: o celular guarda a
+permissão num cookie e depois basta abrir `http://192.168.x.x:8765/`.
+
+- **O token** (`t=...`) é uma senha aleatória, criada na primeira vez e guardada no `.env` como
+  `INTERFACE_TOKEN`. Quem tiver o endereço controla a interface (edita as rotas, roda buscas, desliga):
+  não o publique. Para trocar o token e desconectar os celulares, apague a linha `INTERFACE_TOKEN` do
+  `.env` e abra o atalho de novo.
+- **Firewall.** O Windows libera cada programa por perfil de rede (Privada ou Pública). O ideal é o Wi-Fi de
+  casa marcado como "Privada" e o `pythonw.exe` do Python (o que criou o `.venv`) liberado só nela: se o aviso
+  do firewall aparecer na primeira vez, marque só **Redes privadas**. Se o celular não abrir a página, o
+  suspeito é o firewall: veja em Segurança do Windows → Firewall → Permitir um aplicativo se há regra de
+  entrada para esse `pythonw.exe` **no perfil da rede em que o PC está agora** (Propriedades da rede Wi-Fi
+  mostra se é Privada ou Pública). O PC e o celular precisam estar no mesmo Wi-Fi; alguns roteadores têm
+  "isolamento de clientes", que impede um aparelho de falar com outro.
+- **Mais de um endereço.** Com VPN, VirtualBox ou WSL o PC tem várias placas de rede. A tela de status
+  mostra todas, a do Wi-Fi em geral primeiro; se o primeiro não abrir no celular, tente os outros.
+- **Só em rede de confiança.** A conexão é HTTP, sem criptografia: quem estiver no mesmo Wi-Fi e capturar o
+  tráfego enxerga o token. Use no Wi-Fi de casa, nunca em rede pública ou de hotel.
+- **O PC não precisa do token**: o navegador do próprio PC (`127.0.0.1`) entra direto. Sem `--rede` o
+  servidor só atende o PC e recusa qualquer outro aparelho, mesmo que o uvicorn seja subido à mão em
+  `0.0.0.0`. Para voltar a esse modo: "Desligar interface" e abra o `Flight Scanner.cmd` normal.
+- Se a interface já estiver aberta sem o acesso pelo celular, o atalho `--rede` avisa e pede para desligá-la antes.
 
 ## 4. Agendamento automático
 

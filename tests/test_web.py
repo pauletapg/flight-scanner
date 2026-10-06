@@ -4,7 +4,6 @@ import time
 from datetime import date, datetime, timedelta
 
 import pytest
-from fastapi.testclient import TestClient
 
 from scanner import busca_avulsa, historico, notificar, pesquisa, rotas
 from scanner.pesquisa import Voo
@@ -69,13 +68,13 @@ def caminhos(tmp_path):
 
 
 @pytest.fixture
-def cliente(caminhos):
+def cliente(caminhos, abrir_cliente):
     app = web.criar_app(
         caminho_config=caminhos["config"], caminho_banco=caminhos["banco"], caminho_log=caminhos["log"],
         consultar_tarefas=lambda: [{"nome": "VooScanner", "proxima": "2026-10-05T21:01:10"}],
         comando_scanner=[sys.executable, "-c", "import sys; print('scanner rodou', sys.argv[1:])"],
     )
-    return TestClient(app)
+    return abrir_cliente(app)
 
 
 def esperar(cliente, url, campo="estado", timeout=10):
@@ -350,11 +349,11 @@ def test_rodar_agora_em_dry_run(cliente):
     assert cliente.get("/api/status").json()["execucao"]["codigo"] == 0
 
 
-def test_rodar_agora_uma_por_vez(caminhos):
+def test_rodar_agora_uma_por_vez(caminhos, abrir_cliente):
     app = web.criar_app(caminho_config=caminhos["config"], caminho_banco=caminhos["banco"],
                         caminho_log=caminhos["log"], consultar_tarefas=lambda: [],
                         comando_scanner=[sys.executable, "-c", "import time; time.sleep(1.5); print('ok')"])
-    cliente = TestClient(app)
+    cliente = abrir_cliente(app)
     assert cliente.post("/api/executar", json={}).status_code == 202
     r = cliente.post("/api/executar", json={"dry_run": True})
     assert r.status_code == 409 and "já está rodando" in r.json()["detail"]
@@ -362,11 +361,11 @@ def test_rodar_agora_uma_por_vez(caminhos):
     assert dados["dry_run"] is False and dados["saida"].strip() == "ok"
 
 
-def test_rodar_agora_com_falha(caminhos):
+def test_rodar_agora_com_falha(caminhos, abrir_cliente):
     app = web.criar_app(caminho_config=caminhos["config"], caminho_banco=caminhos["banco"],
                         caminho_log=caminhos["log"], consultar_tarefas=lambda: [],
                         comando_scanner=[sys.executable, "-c", "raise SystemExit('Máximo de 3 rotas')"])
-    cliente = TestClient(app)
+    cliente = abrir_cliente(app)
     cliente.post("/api/executar", json={})
     dados = esperar(cliente, "/api/executar")
     assert dados["estado"] == "erro" and dados["codigo"] == 1 and "Máximo de 3 rotas" in dados["saida"]
@@ -397,20 +396,20 @@ def test_notificacao_com_falha_no_envio(cliente, monkeypatch):
     assert r.status_code == 502 and "sem internet" in r.json()["detail"]
 
 
-def test_desligar_interface_pede_o_encerramento(caminhos):
+def test_desligar_interface_pede_o_encerramento(caminhos, abrir_cliente):
     pedidos = []
     app = web.criar_app(caminho_config=caminhos["config"], caminho_banco=caminhos["banco"],
                         caminho_log=caminhos["log"], consultar_tarefas=lambda: [], desligar=lambda: pedidos.append(1))
-    cliente = TestClient(app)
+    cliente = abrir_cliente(app)
     assert cliente.post("/api/desligar", json={"confirmar": True}).json() == {"ok": True}
     assert pedidos == [1]
 
 
-def test_desligar_interface_exige_confirmacao(caminhos):
+def test_desligar_interface_exige_confirmacao(caminhos, abrir_cliente):
     pedidos = []
     app = web.criar_app(caminho_config=caminhos["config"], caminho_banco=caminhos["banco"],
                         caminho_log=caminhos["log"], consultar_tarefas=lambda: [], desligar=lambda: pedidos.append(1))
-    cliente = TestClient(app)
+    cliente = abrir_cliente(app)
     for corpo in ({}, {"confirmar": False}):
         r = cliente.post("/api/desligar", json=corpo)
         assert r.status_code == 422 and "confirmar" in r.json()["detail"]
