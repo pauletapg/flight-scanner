@@ -40,14 +40,22 @@ def proximo_lote(con: sqlite3.Connection, chave: str, itens: list, n: int, avanc
     linha = con.execute("SELECT valor FROM estado WHERE chave = ?", (chave,)).fetchone()
     inicio = int(linha[0]) % len(itens) if linha else 0
     lote = [itens[(inicio + i) % len(itens)] for i in range(n)]
-    if not avancar:
-        return lote
+    if avancar:
+        avancar_cursor(con, chave, len(itens), n)
+    return lote
+
+
+def avancar_cursor(con: sqlite3.Connection, chave: str, total: int, passos: int) -> None:
+    """Avança o cursor do rodízio só pelas combinações de fato buscadas (as que sobraram ficam na frente)."""
+    if total <= 0 or passos <= 0:
+        return
+    linha = con.execute("SELECT valor FROM estado WHERE chave = ?", (chave,)).fetchone()
+    inicio = int(linha[0]) % total if linha else 0
     con.execute(
         "INSERT OR REPLACE INTO estado (chave, valor) VALUES (?, ?)",
-        (chave, str((inicio + n) % len(itens))),
+        (chave, str((inicio + passos) % total)),
     )
     con.commit()
-    return lote
 
 
 def _combinacao(rota: str, voo: Voo) -> tuple:

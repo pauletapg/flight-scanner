@@ -72,6 +72,9 @@ def buscar(rota: dict, geral: dict, reservas: int = 0, progresso: Progresso = _n
                 classe=rota["classe"], moeda=moeda,
                 escalas_max=filtros.get("escalas_max"), duracao_max_horas=filtros.get("duracao_max_horas"),
             )
+        except pesquisa.SemConexao:
+            progresso(i, len(pares), f"{datas}: sem internet; busca interrompida")
+            break
         except Exception as erro:
             progresso(i, len(pares), f"{datas}: falhou ({erro})")
             continue

@@ -1,12 +1,14 @@
 """Busca de voos: Google Flights via fast-flights, com reserva opcional na SerpApi."""
 
+import json
 import logging
 import os
+import socket
+import time
 from dataclasses import dataclass
 from datetime import date, datetime
 
-import json
-
+import primp
 import requests
 from fast_flights import FlightQuery, FlightsNotFound, Passengers, create_query
 from fast_flights.fetcher import fetch_flights_html
@@ -14,6 +16,30 @@ from fast_flights.parser import parse_js
 from selectolax.lexbor import LexborHTMLParser
 
 log = logging.getLogger(__name__)
+
+PAUSA_NOVA_TENTATIVA_SEG = 60  # antes de repetir no Google uma busca que voltou sem dados
+
+
+class SemConexao(Exception):
+    """O PC está sem internet: não adianta tentar a SerpApi nem as outras combinações agora."""
+
+
+def tem_internet(host: str = "www.google.com") -> bool:
+    try:
+        socket.getaddrinfo(host, 443)
+        return True
+    except OSError:
+        return False
+
+
+def esperar_internet(max_seg: float = 120, intervalo_seg: float = 15) -> bool:
+    """A tarefa agendada pode rodar logo que o PC acorda, antes de o Wi-Fi voltar: espera um pouco."""
+    limite = time.monotonic() + max_seg
+    while not tem_internet():
+        if time.monotonic() >= limite:
+            return False
+        time.sleep(intervalo_seg)
+    return True
 
 
 @dataclass
@@ -51,14 +77,35 @@ def buscar(
     duracao_max_horas: float | None = None,
     usar_serpapi: bool = True,
 ) -> list[Voo]:
-    """Busca no Google Flights; se falhar e houver SERPAPI_KEY (e saldo), tenta a SerpApi."""
+    """Busca no Google Flights (com uma nova tentativa); se falhar e houver SERPAPI_KEY (e saldo), tenta a
+    SerpApi. Sem internet, lança SemConexao."""
+    args = (origem, destino, ida, volta, adultos, criancas, bebes_colo, classe, moeda, escalas_max, duracao_max_horas)
     try:
-        return _buscar_google(origem, destino, ida, volta, adultos, criancas, bebes_colo, classe, moeda, escalas_max, duracao_max_horas)
+        return _buscar_google(*args)
+    except primp.RequestError as erro:  # DNS, conexão, tempo esgotado
+        if not tem_internet():
+            raise SemConexao(f"sem internet ({type(erro).__name__})") from None
+        primeiro = erro
     except Exception as erro:
+        primeiro = erro
+    # O Google às vezes devolve uma página sem a lista de voos; na segunda tentativa costuma vir certa.
+    log.info("Google Flights falhou (%s); tentando de novo em %d s", _resumo(primeiro), PAUSA_NOVA_TENTATIVA_SEG)
+    time.sleep(PAUSA_NOVA_TENTATIVA_SEG)
+    try:
+        return _buscar_google(*args)
+    except Exception as erro:
+        if isinstance(erro, primp.RequestError) and not tem_internet():
+            raise SemConexao(f"sem internet ({type(erro).__name__})") from None
         if not (os.getenv("SERPAPI_KEY") and usar_serpapi):
-            raise
-        log.warning("Google Flights falhou (%r); tentando a SerpApi", erro)
-        return _buscar_serpapi(origem, destino, ida, volta, adultos, criancas, bebes_colo, classe, moeda, escalas_max)
+            raise RuntimeError(f"Google Flights falhou duas vezes: {_resumo(erro)}") from None
+        log.warning("Google Flights falhou duas vezes (%s); tentando a SerpApi", _resumo(erro))
+    return _buscar_serpapi(origem, destino, ida, volta, adultos, criancas, bebes_colo, classe, moeda, escalas_max)
+
+
+def _resumo(erro: Exception) -> str:
+    """Nome do erro e o fim da mensagem (as do primp começam pela URL inteira da busca)."""
+    texto = str(erro).rsplit(" > ", 1)[-1]
+    return f"{type(erro).__name__}: {texto}" if texto else type(erro).__name__
 
 
 def _buscar_google(origem, destino, ida, volta, adultos, criancas, bebes_colo, classe, moeda, escalas_max, duracao_max_horas):
@@ -109,7 +156,10 @@ def _todos_os_voos(html: str) -> list:
     """O Google manda duas listas: "Principais voos" (payload[2], onde costumam estar os mais
     baratos) e "Outros voos" (payload[3]). O parser do fast-flights 3.1.0 só lê a segunda,
     então passamos cada lista para ele separadamente."""
-    js = LexborHTMLParser(html).css_first(r"script.ds\:1").text()
+    script = LexborHTMLParser(html).css_first(r"script.ds\:1")
+    if script is None:  # página de consentimento, de bloqueio ou com layout novo
+        raise PaginaSemDados("o Google devolveu uma página sem a lista de voos")
+    js = script.text()
     dados = js.split("data:", 1)[1].rsplit(",", 1)[0]
     if dados.endswith("errorHasStatus: true"):
         raise FlightsNotFound("no flights found; received error")
@@ -121,6 +171,10 @@ def _todos_os_voos(html: str) -> list:
             copia[3] = payload[secao]
             voos += parse_js("data:" + json.dumps(copia) + ",x")
     return voos
+
+
+class PaginaSemDados(RuntimeError):
+    pass
 
 
 def _data_hora(d) -> datetime:
@@ -138,10 +192,20 @@ serpapi_chamadas = 0  # consultas feitas nesta execução (cada uma gasta 1 do p
 
 def _serpapi(params: dict) -> dict:
     global serpapi_chamadas
-    serpapi_chamadas += 1
-    params = {"engine": "google_flights", "gl": "br", "hl": "pt", "api_key": os.environ["SERPAPI_KEY"], **params}
-    resposta = requests.get("https://serpapi.com/search.json", params=params, timeout=90)
-    resposta.raise_for_status()
+    chave = os.environ["SERPAPI_KEY"]
+    params = {"engine": "google_flights", "gl": "br", "hl": "pt", "api_key": chave, **params}
+    try:
+        resposta = requests.get("https://serpapi.com/search.json", params=params, timeout=90)
+    except requests.ConnectionError as erro:
+        # A mensagem do requests traz a URL com a chave; ela não pode ir para o log (nem para a interface).
+        if not tem_internet("serpapi.com"):
+            raise SemConexao("sem internet (SerpApi)") from None
+        raise RuntimeError(f"SerpApi inacessível: {type(erro).__name__}") from None
+    except requests.RequestException as erro:
+        raise RuntimeError(f"SerpApi falhou: {type(erro).__name__}") from None
+    serpapi_chamadas += 1  # a consulta chegou à SerpApi: conta no plano
+    if not resposta.ok:
+        raise RuntimeError(f"SerpApi respondeu HTTP {resposta.status_code}")
     dados = resposta.json()
     if "error" in dados:
         raise RuntimeError(f"SerpApi: {dados['error']}")

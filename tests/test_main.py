@@ -25,6 +25,7 @@ def ambiente(tmp_path, monkeypatch):
     enviados = []
     monkeypatch.setattr(main, "CAMINHO_BANCO", banco)
     monkeypatch.setattr(main.time, "sleep", lambda s: None)
+    monkeypatch.setattr(pesquisa, "esperar_internet", lambda: True)
     monkeypatch.setattr(pesquisa, "buscar", lambda origem, destino, ida, volta, **_: [
         Voo(origem, destino, ida, volta, 2000, "Gol", 0, 165, f"{ida} 13:50", f"{ida} 16:35", "https://exemplo")
     ])
@@ -58,3 +59,38 @@ def test_execucao_normal_grava_precos_alerta_e_rodizio(ambiente):
     assert contar(banco, "SELECT COUNT(*) FROM precos") == 2
     assert contar(banco, "SELECT COUNT(*) FROM alertas") == 2
     assert contar(banco, "SELECT COUNT(*) FROM estado WHERE chave LIKE 'cursor:%'") == 1
+
+
+def cursor(banco):
+    con = historico.abrir(banco)
+    try:
+        linha = con.execute("SELECT valor FROM estado WHERE chave LIKE 'cursor:%'").fetchone()
+        return linha and int(linha[0])
+    finally:
+        con.close()
+
+
+def test_sem_internet_no_inicio_nao_busca_nem_avanca_o_rodizio(ambiente, monkeypatch, caplog):
+    banco, enviados = ambiente
+    monkeypatch.setattr(pesquisa, "esperar_internet", lambda: False)
+    monkeypatch.setattr(pesquisa, "buscar", lambda *a, **k: pytest.fail("não devia buscar sem internet"))
+    main.executar(config())
+    assert cursor(banco) is None
+    assert any(r.message.startswith("Fim: sem internet") for r in caplog.records)
+
+
+def test_internet_cai_no_meio_avanca_o_rodizio_so_pelo_que_foi_buscado(ambiente, monkeypatch):
+    banco, enviados = ambiente
+    chamadas = []
+
+    def buscar(origem, destino, ida, volta, **_):
+        chamadas.append(ida)
+        if len(chamadas) == 2:
+            raise pesquisa.SemConexao("sem internet")
+        return []
+
+    monkeypatch.setattr(pesquisa, "buscar", buscar)
+    main.executar(config())
+    assert len(chamadas) == 2
+    assert cursor(banco) == 1  # só a primeira das 2 combinações do lote foi buscada
+    assert contar(banco, "SELECT COUNT(DISTINCT ida) FROM precos") <= 1

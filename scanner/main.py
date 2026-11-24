@@ -189,11 +189,16 @@ def executar(config: dict, nome_rota: str | None = None, dry_run: bool = False) 
     con = historico.abrir(CAMINHO_BANCO)
     # O --dry-run (o "teste" da interface) não mexe no histórico nem no rodízio; só a cota da SerpApi e o cache
     # das reservas, que são gastos de verdade, ficam gravados.
-    lote = historico.proximo_lote(con, f"cursor:{nome_rota or '*'}", todas, geral.get("max_buscas_por_execucao", 10),
-                                  avancar=not dry_run)
+    # O cursor só avança no fim, pelas buscas feitas: se a internet cair, as que faltaram vêm na próxima execução.
+    chave_cursor = f"cursor:{nome_rota or '*'}"
+    lote = historico.proximo_lote(con, chave_cursor, todas, geral.get("max_buscas_por_execucao", 10), avancar=False)
     log.info("Início: %d de %d combinações de datas", len(lote), len(todas))
+    if not pesquisa.esperar_internet():
+        log.warning("Fim: sem internet; nenhuma busca feita (o rodízio não avançou)")
+        return
 
     resultados = []
+    feitas = 0
     for i, (rota, ida, volta) in enumerate(lote):
         if i:
             time.sleep(random.uniform(*geral.get("pausa_entre_buscas_seg", [4, 8])))
@@ -211,12 +216,20 @@ def executar(config: dict, nome_rota: str | None = None, dry_run: bool = False) 
                 duracao_max_horas=filtros.get("duracao_max_horas"),
                 usar_serpapi=saldo_serpapi(con, geral) > 0,
             )
+        except pesquisa.SemConexao:
+            log.warning("A internet caiu na busca %s %s → %s; as %d busca(s) restantes ficam para a próxima execução",
+                        rota["nome"], ida, volta or "só ida", len(lote) - i)
+            break
         except Exception:
             log.exception("Falha na busca %s %s → %s", rota["nome"], ida, volta or "só ida")
+            feitas += 1  # erro desta combinação, não da rede: segue o rodízio para não travar nela
             continue
         finally:
             historico.serpapi_somar(con, datetime.now(), pesquisa.serpapi_chamadas - antes)
+        feitas += 1
         resultados.append((rota, ida, volta, voos))
+    if not dry_run and len(todas) > len(lote):
+        historico.avancar_cursor(con, chave_cursor, len(todas), feitas)
 
     consultar_reservas(con, geral, resultados, moeda)
 
